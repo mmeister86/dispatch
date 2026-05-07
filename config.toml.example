@@ -1,0 +1,17 @@
+[llm]
+provider = "anthropic" # anthropic | openai | gemini | openrouter | xai
+model = "claude-sonnet-4-6"
+api_key = "" # or env: LLM_API_KEY
+
+[postiz]
+api_key = "" # or env: POSTIZ_API_KEY
+base_url = "https://app.postiz.com"
+
+[github]
+token = "" # or env: GITHUB_TOKEN
+
+[search]
+provider = "perplexity" # perplexity | brave | serpapi
+api_key = "" # or env: SEARCH_API_KEY
+model = "sonar-pro"
+recency = "week" # hour | day | week | month

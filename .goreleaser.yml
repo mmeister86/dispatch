@@ -1,0 +1,23 @@
+version: 2
+
+project_name: dispatch
+
+builds:
+  - id: dispatch
+    main: .
+    binary: dispatch
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/matthias/dispatch/cmd.version={{.Version}} -X github.com/matthias/dispatch/cmd.commit={{.Commit}} -X github.com/matthias/dispatch/cmd.date={{.Date}}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
