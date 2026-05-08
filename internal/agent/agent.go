@@ -84,10 +84,10 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (<-chan provider.Ch
 				if err != nil {
 					result = fmt.Sprintf("Tool %s fehlgeschlagen: %v", call.Name, err)
 				}
-				out <- provider.Chunk{ToolResult: &provider.ToolResult{Name: call.Name, Result: result}}
 				toolMessage := provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("Tool result for %s:\n%s", call.Name, result)}
 				a.appendHistory(toolMessage)
 				requestHistory = append(requestHistory, toolMessage)
+				out <- provider.Chunk{ToolResult: &provider.ToolResult{Name: call.Name, Result: result}}
 			}
 		}
 		out <- provider.Chunk{Err: fmt.Errorf("agent stopped after too many tool rounds")}
@@ -100,6 +100,19 @@ func (a *Agent) History() []provider.Message {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]provider.Message(nil), a.history...)
+}
+
+func (a *Agent) SetHistory(history []provider.Message) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = append([]provider.Message(nil), history...)
+	a.trimLocked()
+}
+
+func (a *Agent) ClearHistory() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = nil
 }
 
 func (a *Agent) trimLocked() {

@@ -4,7 +4,7 @@ title: Show tool calls before agent replies
 status: In Progress
 assignee: []
 created_date: '2026-05-07 19:14'
-updated_date: '2026-05-07 19:15'
+updated_date: '2026-05-08 20:53'
 labels: []
 dependencies: []
 priority: high
@@ -39,4 +39,6 @@ Adjust the TUI transcript rendering so tool call blocks appear before the associ
 Found root cause: startAgent creates an empty AGENT message before the stream. Later text appends to that early message, so tool blocks added during the stream appear below the answer.
 
 Implemented delayed agent message creation and compact tool formatting. Verified with go test ./... after rerunning outside the sandbox because Go needed access to the normal build cache.
+
+Follow-up fix after manual screenshot: when a tool call arrives after preliminary assistant text, remove that provisional agent message and reset activeMsg so the post-tool answer starts after the tool blocks. Added regression coverage for text → tool call → tool result → answer text. Verified with go test ./... .
 <!-- SECTION:NOTES:END -->

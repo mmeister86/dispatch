@@ -94,3 +94,51 @@ func TestAgentTrimsOldHistory(t *testing.T) {
 		t.Fatalf("trimmed history = %#v", history)
 	}
 }
+
+func TestAgentSetHistoryRestoresContextForNextRun(t *testing.T) {
+	fp := &fakeProvider{chunks: []provider.Chunk{{Text: "weiter"}}}
+	a := New(fp, "", 20)
+	a.SetHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "Erstelle einen Plan."},
+		{Role: provider.RoleAssistant, Content: "Abschnitt 1 steht."},
+	})
+
+	ch, err := a.Run(context.Background(), "Mach weiter.")
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	for range ch {
+	}
+
+	if len(fp.requests) != 1 {
+		t.Fatalf("provider calls = %d", len(fp.requests))
+	}
+	got := fp.requests[0].Messages
+	if len(got) != 3 {
+		t.Fatalf("request history length = %d, want 3: %#v", len(got), got)
+	}
+	if got[0].Content != "Erstelle einen Plan." || got[1].Content != "Abschnitt 1 steht." || got[2].Content != "Mach weiter." {
+		t.Fatalf("request history mismatch: %#v", got)
+	}
+}
+
+func TestAgentClearHistoryRemovesRestoredContext(t *testing.T) {
+	fp := &fakeProvider{chunks: []provider.Chunk{{Text: "neu"}}}
+	a := New(fp, "", 20)
+	a.SetHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "Alter Kontext"},
+	})
+	a.ClearHistory()
+
+	ch, err := a.Run(context.Background(), "Neuer Start")
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	for range ch {
+	}
+
+	got := fp.requests[0].Messages
+	if len(got) != 1 || got[0].Content != "Neuer Start" {
+		t.Fatalf("cleared history should only include new input: %#v", got)
+	}
+}

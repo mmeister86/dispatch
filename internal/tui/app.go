@@ -15,6 +15,7 @@ import (
 	"github.com/matthias/dispatch/config"
 	"github.com/matthias/dispatch/internal/agent"
 	"github.com/matthias/dispatch/internal/provider"
+	"github.com/matthias/dispatch/internal/session"
 )
 
 type messageKind int
@@ -34,9 +35,16 @@ type chatMessage struct {
 type agentChunkMsg provider.Chunk
 type agentDoneMsg struct{}
 
+type sessionStore interface {
+	Load() (session.Session, error)
+	Save(session.Session) error
+	Clear() error
+}
+
 type Model struct {
 	cfg       config.Config
 	agent     *agent.Agent
+	sessions  sessionStore
 	styles    styles
 	viewport  viewport.Model
 	textarea  textarea.Model
@@ -53,6 +61,14 @@ type Model struct {
 }
 
 func New(cfg config.Config, chatAgent *agent.Agent, warnings []string) Model {
+	return newModel(cfg, chatAgent, warnings, nil)
+}
+
+func NewWithSessionStore(cfg config.Config, chatAgent *agent.Agent, warnings []string, store sessionStore) Model {
+	return newModel(cfg, chatAgent, warnings, store)
+}
+
+func newModel(cfg config.Config, chatAgent *agent.Agent, warnings []string, store sessionStore) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Nachricht an dispatch"
 	ta.ShowLineNumbers = false
@@ -68,20 +84,25 @@ func New(cfg config.Config, chatAgent *agent.Agent, warnings []string) Model {
 	m := Model{
 		cfg:       cfg,
 		agent:     chatAgent,
+		sessions:  store,
 		styles:    newStyles(),
 		textarea:  ta,
 		spinner:   sp,
 		activeMsg: -1,
-		messages: []chatMessage{
-			{
-				Kind: kindSystem,
-				Body: "Willkommen bei dispatch.\nKeys werden lokal gelesen. Starte `dispatch --setup`, falls Integrationen fehlen.",
-			},
-			{
-				Kind: kindAgent,
-				Body: "Bereit. Frag mich nach Repo-Aktivitaet, Recherchethemen oder geplanten Posts.",
-			},
-		},
+		messages:  defaultMessages(),
+	}
+	if store != nil {
+		sess, err := store.Load()
+		if err != nil {
+			m.messages = append(m.messages, chatMessage{Kind: kindSystem, Body: fmt.Sprintf("Session konnte nicht geladen werden: %v", err)})
+		} else {
+			if len(sess.Messages) > 0 {
+				m.messages = chatMessagesFromSession(sess.Messages)
+			}
+			if chatAgent != nil && len(sess.AgentHistory) > 0 {
+				chatAgent.SetHistory(sess.AgentHistory)
+			}
+		}
 	}
 	for _, warning := range warnings {
 		m.messages = append(m.messages, chatMessage{Kind: kindSystem, Body: warning})
@@ -119,7 +140,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+l":
 			m.messages = nil
-			m.addMessage(kindSystem, "Chat-Verlauf geleert.")
+			if m.agent != nil {
+				m.agent.ClearHistory()
+			}
+			if m.sessions != nil {
+				if err := m.sessions.Clear(); err != nil {
+					m.addMessage(kindSystem, fmt.Sprintf("Session konnte nicht geloescht werden: %v", err))
+					return m, nil
+				}
+			}
+			m.addMessageNoPersist(kindSystem, "Chat-Verlauf geleert.")
 			return m, nil
 		case "ctrl+p":
 			return m.startAgent("Liste meine geplanten Posts.")
@@ -160,6 +190,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeMsg = m.addMessage(kindAgent, chunk.Text)
 		}
 		if chunk.ToolCall != nil {
+			m.removeActiveAgentMessage()
 			m.addMessage(kindTool, formatToolCall(*chunk.ToolCall))
 		}
 		if chunk.ToolResult != nil {
@@ -171,6 +202,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream = nil
 		m.activeMsg = -1
 		m.refreshViewport()
+		m.persistSession()
 		return m, nil
 	}
 
@@ -197,6 +229,7 @@ func (m Model) startAgent(value string) (tea.Model, tea.Cmd) {
 	m.streaming = true
 	m.stream = stream
 	m.activeMsg = -1
+	m.persistSession()
 	return m, waitForAgentChunk(stream)
 }
 
@@ -236,6 +269,13 @@ func (m *Model) layout() {
 func (m *Model) addMessage(kind messageKind, body string) int {
 	m.messages = append(m.messages, chatMessage{Kind: kind, Body: body})
 	m.refreshViewport()
+	m.persistSession()
+	return len(m.messages) - 1
+}
+
+func (m *Model) addMessageNoPersist(kind messageKind, body string) int {
+	m.messages = append(m.messages, chatMessage{Kind: kind, Body: body})
+	m.refreshViewport()
 	return len(m.messages) - 1
 }
 
@@ -244,6 +284,17 @@ func (m *Model) appendToMessage(index int, text string) {
 		return
 	}
 	m.messages[index].Body += text
+	m.refreshViewport()
+	m.persistSession()
+}
+
+func (m *Model) removeActiveAgentMessage() {
+	if m.activeMsg < 0 || m.activeMsg >= len(m.messages) || m.messages[m.activeMsg].Kind != kindAgent {
+		m.activeMsg = -1
+		return
+	}
+	m.messages = append(m.messages[:m.activeMsg], m.messages[m.activeMsg+1:]...)
+	m.activeMsg = -1
 	m.refreshViewport()
 }
 
@@ -390,4 +441,82 @@ func truncateText(value string, maxRunes int) string {
 	}
 	runes := []rune(value)
 	return string(runes[:maxRunes-1]) + "…"
+}
+
+func defaultMessages() []chatMessage {
+	return []chatMessage{
+		{
+			Kind: kindSystem,
+			Body: "Willkommen bei dispatch.\nKeys werden lokal gelesen. Starte `dispatch --setup`, falls Integrationen fehlen.",
+		},
+		{
+			Kind: kindAgent,
+			Body: "Bereit. Frag mich nach Repo-Aktivitaet, Recherchethemen oder geplanten Posts.",
+		},
+	}
+}
+
+func chatMessagesFromSession(messages []session.Message) []chatMessage {
+	restored := make([]chatMessage, 0, len(messages))
+	for _, msg := range messages {
+		restored = append(restored, chatMessage{
+			Kind: messageKindFromSession(msg.Kind),
+			Body: msg.Body,
+		})
+	}
+	return restored
+}
+
+func messageKindFromSession(kind session.MessageKind) messageKind {
+	switch kind {
+	case session.KindUser:
+		return kindUser
+	case session.KindAgent:
+		return kindAgent
+	case session.KindTool:
+		return kindTool
+	default:
+		return kindSystem
+	}
+}
+
+func sessionKindFromMessage(kind messageKind) session.MessageKind {
+	switch kind {
+	case kindUser:
+		return session.KindUser
+	case kindAgent:
+		return session.KindAgent
+	case kindTool:
+		return session.KindTool
+	default:
+		return session.KindSystem
+	}
+}
+
+func (m Model) sessionMessages() []session.Message {
+	messages := make([]session.Message, 0, len(m.messages))
+	for _, msg := range m.messages {
+		messages = append(messages, session.Message{
+			Kind: sessionKindFromMessage(msg.Kind),
+			Body: msg.Body,
+		})
+	}
+	return messages
+}
+
+func (m Model) agentHistory() []provider.Message {
+	if m.agent == nil {
+		return nil
+	}
+	return m.agent.History()
+}
+
+func (m *Model) persistSession() {
+	if m.sessions == nil {
+		return
+	}
+	_ = m.sessions.Save(session.Session{
+		Messages:     m.sessionMessages(),
+		AgentHistory: m.agentHistory(),
+	})
 }

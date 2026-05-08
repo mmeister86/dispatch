@@ -11,6 +11,7 @@ import (
 	"github.com/matthias/dispatch/config"
 	"github.com/matthias/dispatch/internal/agent"
 	"github.com/matthias/dispatch/internal/provider"
+	"github.com/matthias/dispatch/internal/session"
 	"github.com/matthias/dispatch/internal/tools"
 	"github.com/matthias/dispatch/internal/tui"
 	"github.com/spf13/cobra"
@@ -104,7 +105,7 @@ func runTUI(path string) error {
 		}
 	}
 
-	p := tea.NewProgram(tui.New(cfg, chatAgent, warnings), tea.WithAltScreen())
+	p := tea.NewProgram(tui.NewWithSessionStore(cfg, chatAgent, warnings, session.NewStore("")), tea.WithAltScreen())
 	_, err = p.Run()
 	return err
 }
