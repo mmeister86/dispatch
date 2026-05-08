@@ -142,13 +142,13 @@ func runSetup(cmd *cobra.Command, path string) error {
 	}
 	cfg.LLM.APIKey = apiKey
 
-	postizURL, err := ask(reader, cmd.OutOrStdout(), "Postiz Base URL", cfg.Postiz.BaseURL)
+	postizURL, err := ask(reader, cmd.OutOrStdout(), "Postiz MCP Base URL", cfg.Postiz.BaseURL)
 	if err != nil {
 		return err
 	}
 	cfg.Postiz.BaseURL = postizURL
 
-	postizKey, err := askSecret(reader, cmd, "Postiz API Key (optional)")
+	postizKey, err := askSecret(reader, cmd, "Postiz MCP API Key (optional)")
 	if err != nil {
 		return err
 	}

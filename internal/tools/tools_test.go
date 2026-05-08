@@ -153,12 +153,30 @@ func TestPostizCreatePost(t *testing.T) {
 		var req struct {
 			Method string `json:"method"`
 			Params struct {
-				Name      string          `json:"name"`
-				Arguments json.RawMessage `json:"arguments"`
+				ProtocolVersion string          `json:"protocolVersion"`
+				Name            string          `json:"name"`
+				Arguments       json.RawMessage `json:"arguments"`
 			} `json:"params"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
+		}
+		if req.Method == "initialize" {
+			if r.Header.Get("MCP-Session-Id") != "" {
+				t.Fatalf("initialize session = %q", r.Header.Get("MCP-Session-Id"))
+			}
+			if r.Header.Get("MCP-Protocol-Version") != "2025-06-18" || req.Params.ProtocolVersion != "2025-06-18" {
+				t.Fatalf("protocol version header=%q param=%q", r.Header.Get("MCP-Protocol-Version"), req.Params.ProtocolVersion)
+			}
+			w.Header().Set("MCP-Session-Id", "session-1")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+			return
+		}
+		if r.Header.Get("MCP-Session-Id") != "session-1" {
+			t.Fatalf("session = %q", r.Header.Get("MCP-Session-Id"))
+		}
+		if r.Header.Get("MCP-Protocol-Version") != "2025-06-18" {
+			t.Fatalf("protocol version = %q", r.Header.Get("MCP-Protocol-Version"))
 		}
 		if req.Method != "tools/call" {
 			t.Fatalf("method = %q", req.Method)
@@ -168,11 +186,27 @@ func TestPostizCreatePost(t *testing.T) {
 		case "integrationList":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"linkedin\"}]"}]}}`))
 		case "schedulePostTool":
-			body := string(req.Params.Arguments)
-			for _, want := range []string{`"integrationId":"integration-1"`, `"date":"2026-05-08T09:00:00Z"`, `"content":"<p>Hallo</p>"`} {
-				if !strings.Contains(body, want) {
-					t.Fatalf("schedule args missing %s: %s", want, body)
-				}
+			var args struct {
+				SocialPost []struct {
+					IntegrationID    string `json:"integrationId"`
+					Date             string `json:"date"`
+					PostsAndComments []struct {
+						Content string `json:"content"`
+					} `json:"postsAndComments"`
+				} `json:"socialPost"`
+			}
+			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+				t.Fatalf("decode schedule args: %v", err)
+			}
+			if len(args.SocialPost) != 1 {
+				t.Fatalf("socialPost = %#v", args.SocialPost)
+			}
+			post := args.SocialPost[0]
+			if post.IntegrationID != "integration-1" || post.Date != "2026-05-08T09:00:00Z" {
+				t.Fatalf("post = %#v", post)
+			}
+			if len(post.PostsAndComments) != 1 || post.PostsAndComments[0].Content != "<p>Hallo</p>" {
+				t.Fatalf("postsAndComments = %#v", post.PostsAndComments)
 			}
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"{\"id\":\"post-1\",\"status\":\"scheduled\"}"}]}}`))
 		default:
@@ -211,6 +245,14 @@ func TestPostizListChannelsUsesMCPIntegrationList(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
+		if req.Method == "initialize" {
+			w.Header().Set("MCP-Session-Id", "session-1")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+			return
+		}
+		if r.Header.Get("MCP-Session-Id") != "session-1" {
+			t.Fatalf("session = %q", r.Header.Get("MCP-Session-Id"))
+		}
 		if req.Method != "tools/call" || req.Params.Name != "integrationList" {
 			t.Fatalf("request = %#v", req)
 		}
@@ -219,6 +261,39 @@ func TestPostizListChannelsUsesMCPIntegrationList(t *testing.T) {
 	defer server.Close()
 
 	tool := NewPostiz("postiz-key", server.URL)
+	result, err := tool.Execute(context.Background(), "list_channels", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(result, "channel-1") {
+		t.Fatalf("result = %s", result)
+	}
+}
+
+func TestPostizListChannelsAcceptsFullMCPEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/mcp/postiz-key" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		var req struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Method == "initialize" {
+			w.Header().Set("MCP-Session-Id", "session-1")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+			return
+		}
+		if r.Header.Get("MCP-Session-Id") != "session-1" {
+			t.Fatalf("session = %q", r.Header.Get("MCP-Session-Id"))
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"channel-1\",\"platform\":\"linkedin\"}]"}]}}`))
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
 	result, err := tool.Execute(context.Background(), "list_channels", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)

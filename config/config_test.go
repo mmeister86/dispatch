@@ -46,6 +46,17 @@ func TestValidateReportsMissingKeys(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsPostizKeyInMCPURL(t *testing.T) {
+	cfg := Default()
+	cfg.LLM.APIKey = "llm"
+	cfg.GitHub.Token = "github"
+	cfg.Postiz.BaseURL = "https://postiz.example/api/mcp/postiz-key"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
 func TestWriteAndLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	cfg := Default()

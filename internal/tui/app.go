@@ -75,6 +75,7 @@ func newModel(cfg config.Config, chatAgent *agent.Agent, warnings []string, stor
 	ta.Prompt = "› "
 	ta.CharLimit = 4000
 	ta.SetHeight(1)
+	styleTextarea(&ta)
 	ta.Focus()
 
 	sp := spinner.New()
@@ -109,6 +110,33 @@ func newModel(cfg config.Config, chatAgent *agent.Agent, warnings []string, stor
 	}
 	m.refreshViewport()
 	return m
+}
+
+func styleTextarea(ta *textarea.Model) {
+	base := lipgloss.NewStyle().
+		Background(palette.bg).
+		Foreground(palette.text)
+	prompt := lipgloss.NewStyle().
+		Background(palette.bg).
+		Foreground(palette.green)
+	placeholder := lipgloss.NewStyle().
+		Background(palette.bg).
+		Foreground(palette.dim)
+	cursorLine := lipgloss.NewStyle().
+		Background(palette.bg).
+		Foreground(palette.text)
+
+	ta.FocusedStyle.Base = base
+	ta.FocusedStyle.CursorLine = cursorLine
+	ta.FocusedStyle.Placeholder = placeholder
+	ta.FocusedStyle.Prompt = prompt
+	ta.FocusedStyle.Text = base
+
+	ta.BlurredStyle.Base = base
+	ta.BlurredStyle.CursorLine = cursorLine
+	ta.BlurredStyle.Placeholder = placeholder
+	ta.BlurredStyle.Prompt = prompt
+	ta.BlurredStyle.Text = base
 }
 
 func (m Model) Init() tea.Cmd {
@@ -152,7 +180,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addMessageNoPersist(kindSystem, "Chat-Verlauf geleert.")
 			return m, nil
 		case "ctrl+p":
-			return m.startAgent("Liste meine geplanten Posts.")
+			return m.startAgent("Liste meine verbundenen Postiz-Kanaele.")
 		case "ctrl+r":
 			return m.startAgent("Zeige mir GitHub-Aktivitaet aus allen Repos der letzten 7 Tage.")
 		case "ctrl+s":
@@ -245,13 +273,16 @@ func (m Model) View() string {
 		Render(m.viewport.View())
 	footer := m.renderFooter()
 
-	return m.styles.app.Width(m.width).Render(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
+	return m.paintCanvas(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
 }
 
 func (m *Model) layout() {
-	headerHeight := 1
-	footerHeight := 4
-	bodyHeight := max(1, m.height-headerHeight-footerHeight-2)
+	const (
+		headerHeight = 2
+		bodyChrome   = 4
+		footerHeight = 3
+	)
+	bodyHeight := max(1, m.height-headerHeight-bodyChrome-footerHeight)
 	bodyWidth := max(20, m.width-6)
 
 	if !m.ready {
@@ -264,6 +295,26 @@ func (m *Model) layout() {
 
 	m.textarea.SetWidth(max(20, m.width-6))
 	m.refreshViewport()
+}
+
+func (m Model) paintCanvas(view string) string {
+	if m.width <= 0 || m.height <= 0 {
+		return m.styles.app.Render(view)
+	}
+
+	lines := strings.Split(view, "\n")
+	if len(lines) > m.height {
+		lines = lines[:m.height]
+	}
+	for len(lines) < m.height {
+		lines = append(lines, "")
+	}
+
+	painted := make([]string, len(lines))
+	for i, line := range lines {
+		painted[i] = m.styles.app.Width(m.width).MaxWidth(m.width).Render(line)
+	}
+	return strings.Join(painted, "\n")
 }
 
 func (m *Model) addMessage(kind messageKind, body string) int {
@@ -309,7 +360,7 @@ func (m *Model) refreshViewport() {
 	if m.showHelp {
 		blocks = append(blocks, m.renderMessage(chatMessage{
 			Kind: kindSystem,
-			Body: "Shortcuts\nctrl+p posts  ·  ctrl+r repos  ·  ctrl+s suche  ·  ctrl+l leeren  ·  ctrl+c abbrechen  ·  ctrl+q beenden",
+			Body: "Shortcuts\nctrl+p postiz  ·  ctrl+r repos  ·  ctrl+s suche  ·  ctrl+l leeren  ·  ctrl+c abbrechen  ·  ctrl+q beenden",
 		}))
 	}
 	if m.streaming && m.activeMsg < 0 {
@@ -325,7 +376,7 @@ func (m *Model) refreshViewport() {
 func (m Model) renderHeader() string {
 	status := strings.Join([]string{
 		statusDot(m.cfg.LLM.APIKey != "") + " " + m.cfg.LLM.Provider + "/" + m.cfg.LLM.Model,
-		statusDot(m.cfg.Postiz.APIKey != "") + " postiz",
+		statusDot(m.cfg.Postiz.APIKey != "" || strings.Contains(m.cfg.Postiz.BaseURL, "/mcp/")) + " postiz",
 		statusDot(m.cfg.GitHub.Token != "") + " github",
 		statusDot(m.cfg.Search.APIKey != "") + " " + m.cfg.Search.Provider,
 	}, "   ")
@@ -338,29 +389,43 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	input := m.textarea.View()
-	shortcuts := m.styles.shortcuts.Render("ctrl+p posts   ctrl+r repos   ctrl+s suche   ctrl+c abbrechen   ? hilfe")
+	shortcuts := m.styles.shortcuts.Render("ctrl+p postiz   ctrl+r repos   ctrl+s suche   ctrl+c abbrechen   ? hilfe")
 	return m.styles.footer.Width(m.width).Render(input + "\n" + shortcuts)
 }
 
 func (m Model) renderMessage(msg chatMessage) string {
+	width := m.messageWidth()
 	switch msg.Kind {
 	case kindUser:
-		return m.styles.label.Foreground(lipgloss.Color("#4a8a9a")).Render("DU") + "\n" + m.styles.user.Width(m.viewport.Width-2).Render(msg.Body)
+		return m.styles.label.Foreground(lipgloss.Color("#75b7c8")).Render("Du") + "\n" + m.styles.user.Width(width).Render(cleanInlineMarkdown(msg.Body))
 	case kindAgent:
-		label := "AGENT"
+		label := "Antwort"
 		if m.streaming {
-			label += " · schreibt..."
+			label += " · schreibt"
 		}
 		body := msg.Body
 		if body == "" && m.streaming {
 			body = m.spinner.View()
 		}
-		return m.styles.label.Foreground(palette.green).Render(label) + "\n" + m.styles.agent.Width(m.viewport.Width-2).Render(body)
+		return m.styles.label.Foreground(palette.green).Bold(true).Render(label) + "\n" + m.styles.agent.Width(width).Render(cleanMessageMarkdown(body, width))
 	case kindTool:
-		return m.styles.label.Foreground(palette.amber).Render("▶ TOOL") + "\n" + m.styles.tool.Width(m.viewport.Width-2).Render(msg.Body)
+		name, detail := splitToolMessage(msg.Body)
+		label := "Tool"
+		if name != "" {
+			label += " · " + name
+		}
+		return m.styles.label.Foreground(palette.amber).Render(label) + "\n" + m.styles.tool.Width(width).Render(shortenLines(detail, 4, 420))
 	default:
-		return m.styles.label.Foreground(palette.purple).Render("SYSTEM") + "\n" + m.styles.system.Width(m.viewport.Width-2).Render(msg.Body)
+		return m.styles.label.Foreground(palette.purple).Render("System") + "\n" + m.styles.system.Width(width).Render(cleanInlineMarkdown(msg.Body))
 	}
+}
+
+func (m Model) messageWidth() int {
+	width := max(20, m.viewport.Width-2)
+	if width > 112 {
+		return 112
+	}
+	return width
 }
 
 func waitForAgentChunk(ch <-chan provider.Chunk) tea.Cmd {
@@ -387,6 +452,13 @@ func max(a, b int) int {
 	return b
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func formatToolCall(call provider.ToolCall) string {
 	args := strings.TrimSpace(call.Arguments)
 	if args == "" {
@@ -401,6 +473,71 @@ func formatToolResult(result provider.ToolResult) string {
 		return result.Name + " → fertig"
 	}
 	return fmt.Sprintf("%s →\n%s", result.Name, shortenLines(body, 6, 700))
+}
+
+func splitToolMessage(body string) (string, string) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "", ""
+	}
+
+	first, rest, found := strings.Cut(body, "\n")
+	first = strings.TrimSpace(first)
+	name := first
+	if before, _, ok := strings.Cut(name, "("); ok {
+		name = strings.TrimSpace(before)
+	}
+	if before, _, ok := strings.Cut(name, "→"); ok {
+		name = strings.TrimSpace(before)
+	}
+	if !found {
+		if detail, ok := strings.CutPrefix(first, name+"("); ok {
+			return name, "(" + strings.TrimSpace(detail)
+		}
+		if detail, ok := strings.CutPrefix(first, name+" →"); ok {
+			return name, strings.TrimSpace(detail)
+		}
+		return name, body
+	}
+	return name, strings.TrimSpace(rest)
+}
+
+func cleanMessageMarkdown(body string, width int) string {
+	lines := strings.Split(body, "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		cleaned = append(cleaned, cleanMarkdownLine(line, width))
+	}
+	return strings.Join(cleaned, "\n")
+}
+
+func cleanMarkdownLine(line string, width int) string {
+	trimmed := strings.TrimSpace(line)
+	if isMarkdownRule(trimmed) {
+		return strings.Repeat("─", max(12, min(width, 56)))
+	}
+	if strings.HasPrefix(trimmed, "#") {
+		return strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+	}
+	return cleanInlineMarkdown(line)
+}
+
+func cleanInlineMarkdown(value string) string {
+	value = strings.ReplaceAll(value, "**", "")
+	value = strings.ReplaceAll(value, "__", "")
+	return value
+}
+
+func isMarkdownRule(value string) bool {
+	if len(value) < 3 {
+		return false
+	}
+	for _, ch := range value {
+		if ch != '-' && ch != '_' && ch != '*' {
+			return false
+		}
+	}
+	return true
 }
 
 func compactJSON(value string) string {

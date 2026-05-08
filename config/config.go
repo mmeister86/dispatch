@@ -123,7 +123,7 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.LLM.Model) == "" {
 		missing = append(missing, "llm.model")
 	}
-	if strings.TrimSpace(c.Postiz.APIKey) == "" {
+	if strings.TrimSpace(c.Postiz.APIKey) == "" && !strings.Contains(c.Postiz.BaseURL, "/mcp/") {
 		missing = append(missing, "POSTIZ_API_KEY oder postiz.api_key")
 	}
 	if strings.TrimSpace(c.GitHub.Token) == "" {

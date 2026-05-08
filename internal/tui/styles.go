@@ -16,25 +16,27 @@ var palette = struct {
 	errorRed lipgloss.Color
 }{
 	bg:       lipgloss.Color("#070b09"),
-	surface:  lipgloss.Color("#0a120a"),
-	line:     lipgloss.Color("#142014"),
-	text:     lipgloss.Color("#b0ccb0"),
-	dim:      lipgloss.Color("#3a5a3a"),
-	green:    lipgloss.Color("#68c868"),
-	blue:     lipgloss.Color("#5899dd"),
-	amber:    lipgloss.Color("#c49020"),
-	purple:   lipgloss.Color("#9878c0"),
-	warning:  lipgloss.Color("#c49020"),
-	errorRed: lipgloss.Color("#cc5f5f"),
+	surface:  lipgloss.Color("#09110d"),
+	line:     lipgloss.Color("#203026"),
+	text:     lipgloss.Color("#d6ead2"),
+	dim:      lipgloss.Color("#78927c"),
+	green:    lipgloss.Color("#98e69f"),
+	blue:     lipgloss.Color("#83bed1"),
+	amber:    lipgloss.Color("#e0b35a"),
+	purple:   lipgloss.Color("#baa0df"),
+	warning:  lipgloss.Color("#e0b35a"),
+	errorRed: lipgloss.Color("#e27a7a"),
 }
 
 type styles struct {
 	app       lipgloss.Style
 	header    lipgloss.Style
+	headerBG  lipgloss.Color
 	appName   lipgloss.Style
 	status    lipgloss.Style
 	body      lipgloss.Style
 	footer    lipgloss.Style
+	footerBG  lipgloss.Color
 	prompt    lipgloss.Style
 	shortcuts lipgloss.Style
 	label     lipgloss.Style
@@ -46,20 +48,25 @@ type styles struct {
 }
 
 func newStyles() styles {
+	headerBG := lipgloss.Color("#0b140f")
+	footerBG := lipgloss.Color("#0b140f")
 	return styles{
 		app: lipgloss.NewStyle().
 			Background(palette.bg).
 			Foreground(palette.text),
 		header: lipgloss.NewStyle().
-			Background(lipgloss.Color("#0c150c")).
+			Background(headerBG).
 			Foreground(palette.dim).
 			Border(lipgloss.NormalBorder(), false, false, true, false).
 			BorderForeground(palette.line).
 			Padding(0, 2),
+		headerBG: headerBG,
 		appName: lipgloss.NewStyle().
+			Background(headerBG).
 			Foreground(palette.green).
 			Bold(true),
 		status: lipgloss.NewStyle().
+			Background(headerBG).
 			Foreground(palette.dim),
 		body: lipgloss.NewStyle().
 			Background(palette.surface).
@@ -68,38 +75,40 @@ func newStyles() styles {
 			BorderForeground(palette.line).
 			Padding(1, 2),
 		footer: lipgloss.NewStyle().
-			Background(lipgloss.Color("#0c150c")).
+			Background(footerBG).
 			Foreground(palette.dim).
 			Border(lipgloss.NormalBorder(), true, false, false, false).
 			BorderForeground(palette.line).
 			Padding(0, 2),
+		footerBG: footerBG,
 		prompt: lipgloss.NewStyle().
+			Background(footerBG).
 			Foreground(palette.green),
 		shortcuts: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#1e3a1e")),
+			Background(footerBG).
+			Foreground(lipgloss.Color("#5f7a63")),
 		label: lipgloss.NewStyle().
+			Background(palette.surface).
 			Faint(true),
 		user: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#80b0bc")).
-			PaddingLeft(2).
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(lipgloss.Color("#1a3040")),
+			Background(palette.surface).
+			Foreground(palette.blue).
+			PaddingLeft(1),
 		agent: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#a8cca8")).
-			PaddingLeft(2).
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(lipgloss.Color("#1a3a1a")),
+			Background(palette.surface).
+			Foreground(palette.text).
+			PaddingLeft(1),
 		system: lipgloss.NewStyle().
+			Background(palette.surface).
 			Foreground(palette.purple).
-			PaddingLeft(2).
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(lipgloss.Color("#2a1840")),
+			PaddingLeft(1),
 		tool: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#b89040")).
-			PaddingLeft(2).
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(lipgloss.Color("#362a0c")),
+			Background(palette.surface).
+			Foreground(lipgloss.Color("#b9954f")).
+			PaddingLeft(1).
+			Faint(true),
 		accent: lipgloss.NewStyle().
+			Background(palette.surface).
 			Foreground(palette.amber),
 	}
 }

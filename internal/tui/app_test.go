@@ -11,6 +11,7 @@ import (
 	"github.com/matthias/dispatch/internal/agent"
 	"github.com/matthias/dispatch/internal/provider"
 	"github.com/matthias/dispatch/internal/session"
+	"github.com/muesli/termenv"
 )
 
 func TestToolMessagesRenderBeforeDelayedAgentReply(t *testing.T) {
@@ -187,6 +188,61 @@ func TestToolResultRendersAsCompactStatusBlock(t *testing.T) {
 	}
 }
 
+func TestViewPaintsEveryTerminalCell(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+	})
+
+	m := New(config.Config{}, nil, nil)
+	m.width = 96
+	m.height = 24
+	m.layout()
+
+	rendered := m.View()
+	lines := strings.Split(rendered, "\n")
+
+	if len(lines) != m.height {
+		t.Fatalf("rendered line count = %d, want %d\n%s", len(lines), m.height, rendered)
+	}
+	for i, line := range lines {
+		if width := visibleWidth(line); width != m.width {
+			t.Fatalf("line %d width = %d, want %d\nline: %q\nrendered:\n%s", i+1, width, m.width, line, rendered)
+		}
+		if !strings.Contains(line, "48;2;7;11;9") {
+			t.Fatalf("line %d should carry the app background color so transparent terminals do not show through: %q", i+1, line)
+		}
+	}
+}
+
+func TestMessageRenderingPaintsInlineBackgrounds(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+	})
+
+	m := New(config.Config{}, nil, nil)
+	m.width = 96
+	m.height = 24
+	m.layout()
+
+	rendered := m.renderMessage(chatMessage{
+		Kind: kindAgent,
+		Body: "Hier ist Text ohne Terminal-Default-Hintergrund.",
+	})
+
+	for i, line := range strings.Split(rendered, "\n") {
+		if strings.TrimSpace(stripANSI(line)) == "" {
+			continue
+		}
+		if !strings.Contains(line, "48;2;9;17;13") {
+			t.Fatalf("message line %d should carry the surface background color: %q", i+1, line)
+		}
+	}
+}
+
 type memorySessionStore struct {
 	loaded  session.Session
 	saved   []session.Session
@@ -310,4 +366,24 @@ func teaKey(value string) tea.KeyMsg {
 
 func visibleWidth(value string) int {
 	return lipgloss.Width(value)
+}
+
+func stripANSI(value string) string {
+	var b strings.Builder
+	inEscape := false
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if inEscape {
+			if ch >= '@' && ch <= '~' {
+				inEscape = false
+			}
+			continue
+		}
+		if ch == '\x1b' {
+			inEscape = true
+			continue
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
 }

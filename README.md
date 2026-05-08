@@ -61,9 +61,9 @@ Configured providers receive tool definitions for:
 
 - GitHub: recent commits, combined activity, and file reads
 - Search: Perplexity/Sonar web research with citations
-- Postiz: list channels/posts and create scheduled posts
+- Postiz MCP: list channels and create scheduled posts
 
-Use `ctrl+r` for repo activity, `ctrl+p` for scheduled posts, and `ctrl+s` for research from the TUI.
+Use `ctrl+r` for repo activity, `ctrl+p` for Postiz channels, and `ctrl+s` for research from the TUI.
 
 The committed `config.toml.example` contains placeholders only. Real secrets belong in the user config directory or environment.
 
