@@ -91,7 +91,11 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 				"settings": []map[string]any{},
 			}},
 		}
-		return p.callMCPTool(ctx, "schedulePostTool", payload)
+		result, err := p.callMCPTool(ctx, "schedulePostTool", payload)
+		if err != nil && isUnknownMCPTool(err, "schedulePostTool") {
+			return p.createPostPublic(ctx, integrationID, req.Content, req.ScheduledAt, req.MediaURLs)
+		}
+		return result, err
 	case "list_posts":
 		return "", fmt.Errorf("Postiz MCP bietet laut Dokumentation kein list_posts Tool an")
 	case "list_channels":
@@ -163,6 +167,14 @@ func (p *Postiz) postMCPToolCall(ctx context.Context, endpoint string, body []by
 	}
 	result, err := parseMCPToolResult(respBody)
 	return result, resp.StatusCode, bodyText, err
+}
+
+func isUnknownMCPTool(err error, toolName string) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "Unknown tool") && strings.Contains(message, toolName)
 }
 
 func isExpiredMCPSession(status int, body string) bool {
@@ -286,6 +298,96 @@ func (p *Postiz) mcpEndpoint() (string, error) {
 	}
 	u.RawQuery = ""
 	return u.String(), nil
+}
+
+func (p *Postiz) publicAPIEndpoint() (string, error) {
+	if strings.TrimSpace(p.baseURL) == "" {
+		return "", fmt.Errorf("Postiz Base URL fehlt")
+	}
+	u, err := url.Parse(p.baseURL)
+	if err != nil {
+		return "", err
+	}
+	path := strings.TrimRight(u.Path, "/")
+	for _, marker := range []string{"/api/mcp/", "/mcp/"} {
+		if idx := strings.Index(path, marker); idx != -1 {
+			path = strings.TrimRight(path[:idx], "/")
+			break
+		}
+	}
+	u.Path = path + "/public/v1/posts"
+	u.RawQuery = ""
+	return u.String(), nil
+}
+
+func (p *Postiz) postizAPIKey() (string, error) {
+	if strings.TrimSpace(p.apiKey) != "" {
+		return p.apiKey, nil
+	}
+	u, err := url.Parse(p.baseURL)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for i := 0; i < len(parts)-1; i++ {
+		if parts[i] != "mcp" {
+			continue
+		}
+		key, err := url.PathUnescape(parts[i+1])
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(key) != "" {
+			return key, nil
+		}
+	}
+	return "", fmt.Errorf("Postiz API Key fehlt")
+}
+
+func (p *Postiz) createPostPublic(ctx context.Context, integrationID, content, scheduledAt string, mediaURLs []string) (string, error) {
+	endpoint, err := p.publicAPIEndpoint()
+	if err != nil {
+		return "", err
+	}
+	apiKey, err := p.postizAPIKey()
+	if err != nil {
+		return "", err
+	}
+	payload := map[string]any{
+		"type":      "schedule",
+		"date":      scheduledAt,
+		"shortLink": false,
+		"tags":      []any{},
+		"posts": []map[string]any{{
+			"integration": map[string]any{"id": integrationID},
+			"value": []map[string]any{{
+				"content": strings.TrimSpace(content),
+				"image":   mediaURLs,
+			}},
+			"settings": map[string]any{},
+		}},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("authorization", apiKey)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	bodyText := strings.TrimSpace(string(respBody))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("Postiz Public API returned %s: %s", resp.Status, bodyText)
+	}
+	return bodyText, nil
 }
 
 func parseMCPToolResult(body []byte) (string, error) {

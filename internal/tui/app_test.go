@@ -188,7 +188,7 @@ func TestToolResultRendersAsCompactStatusBlock(t *testing.T) {
 	}
 }
 
-func TestViewPaintsEveryTerminalCell(t *testing.T) {
+func TestViewRendersExactTerminalSizeWithoutBackgroundPane(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() {
@@ -210,13 +210,13 @@ func TestViewPaintsEveryTerminalCell(t *testing.T) {
 		if width := visibleWidth(line); width != m.width {
 			t.Fatalf("line %d width = %d, want %d\nline: %q\nrendered:\n%s", i+1, width, m.width, line, rendered)
 		}
-		if !strings.Contains(line, "48;2;7;11;9") {
-			t.Fatalf("line %d should carry the app background color so transparent terminals do not show through: %q", i+1, line)
+		if strings.Contains(line, "48;2;") {
+			t.Fatalf("line %d should not paint a full-width background pane: %q", i+1, line)
 		}
 	}
 }
 
-func TestMessageRenderingPaintsInlineBackgrounds(t *testing.T) {
+func TestMessageRenderingDoesNotPaintInlineBackgrounds(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() {
@@ -237,8 +237,8 @@ func TestMessageRenderingPaintsInlineBackgrounds(t *testing.T) {
 		if strings.TrimSpace(stripANSI(line)) == "" {
 			continue
 		}
-		if !strings.Contains(line, "48;2;9;17;13") {
-			t.Fatalf("message line %d should carry the surface background color: %q", i+1, line)
+		if strings.Contains(line, "48;2;") {
+			t.Fatalf("message line %d should not paint inline background blocks: %q", i+1, line)
 		}
 	}
 }
