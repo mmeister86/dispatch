@@ -39,12 +39,17 @@ type sessionStore interface {
 	Load() (session.Session, error)
 	Save(session.Session) error
 	Clear() error
+	List() ([]session.Summary, error)
+	StartNew() (session.Session, error)
+	Open(id string) (session.Session, error)
+	Delete(id string) error
 }
 
 type Model struct {
 	cfg       config.Config
 	agent     *agent.Agent
 	sessions  sessionStore
+	session   session.Session
 	styles    styles
 	viewport  viewport.Model
 	textarea  textarea.Model
@@ -86,6 +91,7 @@ func newModel(cfg config.Config, chatAgent *agent.Agent, warnings []string, stor
 		cfg:       cfg,
 		agent:     chatAgent,
 		sessions:  store,
+		session:   session.Session{Version: 1},
 		styles:    newStyles(),
 		textarea:  ta,
 		spinner:   sp,
@@ -97,6 +103,7 @@ func newModel(cfg config.Config, chatAgent *agent.Agent, warnings []string, stor
 		if err != nil {
 			m.messages = append(m.messages, chatMessage{Kind: kindSystem, Body: fmt.Sprintf("Session konnte nicht geladen werden: %v", err)})
 		} else {
+			m.session = sess
 			if len(sess.Messages) > 0 {
 				m.messages = chatMessagesFromSession(sess.Messages)
 			}
@@ -197,6 +204,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.lastInput = value
 			m.textarea.Reset()
+			if isSessionCommand(value) {
+				return m.handleSessionCommand(value)
+			}
 			return m.startAgent(value)
 		}
 	case spinner.TickMsg:
@@ -243,6 +253,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+func isSessionCommand(value string) bool {
+	return value == "/session" || strings.HasPrefix(value, "/session ")
+}
+
 func (m Model) startAgent(value string) (tea.Model, tea.Cmd) {
 	m.addMessage(kindUser, value)
 	if m.agent == nil {
@@ -259,6 +273,91 @@ func (m Model) startAgent(value string) (tea.Model, tea.Cmd) {
 	m.activeMsg = -1
 	m.persistSession()
 	return m, waitForAgentChunk(stream)
+}
+
+func (m Model) handleSessionCommand(value string) (tea.Model, tea.Cmd) {
+	if m.sessions == nil {
+		m.addMessageNoPersist(kindSystem, "Sessions sind in dieser Ansicht nicht verfuegbar.")
+		return m, nil
+	}
+
+	fields := strings.Fields(value)
+	if len(fields) == 1 {
+		return m.showSessions()
+	}
+
+	switch fields[1] {
+	case "new":
+		return m.startNewSession()
+	case "open":
+		if len(fields) < 3 {
+			m.addMessageNoPersist(kindSystem, "Nutze `/session open <id>`.")
+			return m, nil
+		}
+		return m.openSession(fields[2])
+	case "delete":
+		if len(fields) < 3 {
+			m.addMessageNoPersist(kindSystem, "Nutze `/session delete <id>`.")
+			return m, nil
+		}
+		return m.deleteSession(fields[2])
+	default:
+		m.addMessageNoPersist(kindSystem, "Sessions\n/session\n/session new\n/session open <id>\n/session delete <id>")
+		return m, nil
+	}
+}
+
+func (m Model) showSessions() (tea.Model, tea.Cmd) {
+	summaries, err := m.sessions.List()
+	if err != nil {
+		m.addMessageNoPersist(kindSystem, fmt.Sprintf("Sessions konnten nicht geladen werden: %v", err))
+		return m, nil
+	}
+	m.addMessageNoPersist(kindSystem, formatSessionOverview(summaries))
+	return m, nil
+}
+
+func (m Model) startNewSession() (tea.Model, tea.Cmd) {
+	sess, err := m.sessions.StartNew()
+	if err != nil {
+		m.addMessageNoPersist(kindSystem, fmt.Sprintf("Neue Session konnte nicht gestartet werden: %v", err))
+		return m, nil
+	}
+	m.session = sess
+	m.messages = defaultMessages()
+	if m.agent != nil {
+		m.agent.ClearHistory()
+	}
+	m.addMessageNoPersist(kindSystem, fmt.Sprintf("Neue Session gestartet: %s", sess.ID))
+	return m, nil
+}
+
+func (m Model) openSession(id string) (tea.Model, tea.Cmd) {
+	sess, err := m.sessions.Open(id)
+	if err != nil {
+		m.addMessageNoPersist(kindSystem, fmt.Sprintf("Session konnte nicht geoeffnet werden: %v", err))
+		return m, nil
+	}
+	m.session = sess
+	if len(sess.Messages) > 0 {
+		m.messages = chatMessagesFromSession(sess.Messages)
+	} else {
+		m.messages = defaultMessages()
+	}
+	if m.agent != nil {
+		m.agent.SetHistory(sess.AgentHistory)
+	}
+	m.addMessageNoPersist(kindSystem, fmt.Sprintf("Session geoeffnet: %s", sess.ID))
+	return m, nil
+}
+
+func (m Model) deleteSession(id string) (tea.Model, tea.Cmd) {
+	if err := m.sessions.Delete(id); err != nil {
+		m.addMessageNoPersist(kindSystem, fmt.Sprintf("Session konnte nicht geloescht werden: %v", err))
+		return m, nil
+	}
+	m.addMessageNoPersist(kindSystem, fmt.Sprintf("Session geloescht: %s", id))
+	return m, nil
 }
 
 func (m Model) View() string {
@@ -652,8 +751,28 @@ func (m *Model) persistSession() {
 	if m.sessions == nil {
 		return
 	}
-	_ = m.sessions.Save(session.Session{
-		Messages:     m.sessionMessages(),
-		AgentHistory: m.agentHistory(),
-	})
+	sess := m.session
+	sess.Messages = m.sessionMessages()
+	sess.AgentHistory = m.agentHistory()
+	_ = m.sessions.Save(sess)
+}
+
+func formatSessionOverview(summaries []session.Summary) string {
+	if len(summaries) == 0 {
+		return "Sessions\nKeine gespeicherten Sessions."
+	}
+	var lines []string
+	lines = append(lines, "Sessions")
+	for _, summary := range summaries {
+		marker := " "
+		if summary.Current {
+			marker = "*"
+		}
+		title := strings.TrimSpace(summary.Title)
+		if title == "" {
+			title = "Neue Session"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s  %s  %d Nachrichten", marker, summary.ID, title, summary.MessageCount))
+	}
+	return strings.Join(lines, "\n")
 }

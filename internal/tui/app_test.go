@@ -245,8 +245,12 @@ func TestMessageRenderingPaintsInlineBackgrounds(t *testing.T) {
 
 type memorySessionStore struct {
 	loaded  session.Session
+	listed  []session.Summary
+	opened  map[string]session.Session
+	deleted string
 	saved   []session.Session
 	cleared bool
+	started session.Session
 }
 
 type tuiFakeProvider struct{}
@@ -271,6 +275,29 @@ func (s *memorySessionStore) Save(sess session.Session) error {
 
 func (s *memorySessionStore) Clear() error {
 	s.cleared = true
+	return nil
+}
+
+func (s *memorySessionStore) List() ([]session.Summary, error) {
+	return s.listed, nil
+}
+
+func (s *memorySessionStore) StartNew() (session.Session, error) {
+	if s.started.ID == "" {
+		s.started = session.Session{ID: "new-session"}
+	}
+	s.loaded = s.started
+	return s.started, nil
+}
+
+func (s *memorySessionStore) Open(id string) (session.Session, error) {
+	sess := s.opened[id]
+	s.loaded = sess
+	return sess, nil
+}
+
+func (s *memorySessionStore) Delete(id string) error {
+	s.deleted = id
 	return nil
 }
 
@@ -357,11 +384,131 @@ func TestAgentChunkPersistsVisibleAssistantText(t *testing.T) {
 	}
 }
 
+func TestSessionCommandListsSessionsWithoutCallingAgent(t *testing.T) {
+	fp := &countingProvider{}
+	chatAgent := agent.New(fp, "", 20)
+	store := &memorySessionStore{
+		listed: []session.Summary{
+			{ID: "abc123", Title: "Launch plan", MessageCount: 4, Current: true},
+			{ID: "def456", Title: "Follow-up", MessageCount: 2},
+		},
+	}
+	m := NewWithSessionStore(config.Config{}, chatAgent, nil, store)
+	m.layout()
+	m.textarea.SetValue("/session")
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	if fp.calls != 0 {
+		t.Fatalf("/session should not call the agent, calls = %d", fp.calls)
+	}
+	if !containsMessage(m.messages, "abc123") || !containsMessage(m.messages, "Launch plan") {
+		t.Fatalf("session overview not rendered: %#v", m.messages)
+	}
+}
+
+func TestSessionNewStartsFreshLocalSession(t *testing.T) {
+	chatAgent := agent.New(tuiFakeProvider{}, "", 20)
+	chatAgent.SetHistory([]provider.Message{{Role: provider.RoleUser, Content: "Alter Kontext"}})
+	store := &memorySessionStore{started: session.Session{ID: "fresh"}}
+	m := NewWithSessionStore(config.Config{}, chatAgent, nil, store)
+	m.layout()
+	m.textarea.SetValue("/session new")
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	if len(chatAgent.History()) != 0 {
+		t.Fatalf("new session should clear agent history: %#v", chatAgent.History())
+	}
+	if !containsMessage(m.messages, "Neue Session gestartet: fresh") {
+		t.Fatalf("new session confirmation missing: %#v", m.messages)
+	}
+}
+
+func TestSessionOpenRestoresSelectedSession(t *testing.T) {
+	chatAgent := agent.New(tuiFakeProvider{}, "", 20)
+	store := &memorySessionStore{
+		opened: map[string]session.Session{
+			"abc123": {
+				ID: "abc123",
+				Messages: []session.Message{
+					{Kind: session.KindUser, Body: "Alter Plan"},
+					{Kind: session.KindAgent, Body: "Alter Entwurf"},
+				},
+				AgentHistory: []provider.Message{
+					{Role: provider.RoleUser, Content: "Alter Plan"},
+					{Role: provider.RoleAssistant, Content: "Alter Entwurf"},
+				},
+			},
+		},
+	}
+	m := NewWithSessionStore(config.Config{}, chatAgent, nil, store)
+	m.layout()
+	m.textarea.SetValue("/session open abc123")
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	if !containsMessage(m.messages, "Alter Entwurf") {
+		t.Fatalf("opened transcript missing: %#v", m.messages)
+	}
+	if len(chatAgent.History()) != 2 {
+		t.Fatalf("opened agent history missing: %#v", chatAgent.History())
+	}
+}
+
+func TestSessionDeleteIsLocalCommand(t *testing.T) {
+	fp := &countingProvider{}
+	chatAgent := agent.New(fp, "", 20)
+	store := &memorySessionStore{}
+	m := NewWithSessionStore(config.Config{}, chatAgent, nil, store)
+	m.layout()
+	m.textarea.SetValue("/session delete old123")
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	if fp.calls != 0 {
+		t.Fatalf("/session delete should not call the agent, calls = %d", fp.calls)
+	}
+	if store.deleted != "old123" {
+		t.Fatalf("deleted id = %q, want old123", store.deleted)
+	}
+	if !containsMessage(m.messages, "Session geloescht: old123") {
+		t.Fatalf("delete confirmation missing: %#v", m.messages)
+	}
+}
+
 func teaKey(value string) tea.KeyMsg {
 	if value == "ctrl+l" {
 		return tea.KeyMsg{Type: tea.KeyCtrlL}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
+}
+
+type countingProvider struct {
+	calls int
+}
+
+func (p *countingProvider) Complete(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.calls++
+	ch := make(chan provider.Chunk)
+	close(ch)
+	return ch, nil
+}
+
+func (p *countingProvider) Name() string    { return "counting" }
+func (p *countingProvider) ModelID() string { return "counting-model" }
+
+func containsMessage(messages []chatMessage, text string) bool {
+	for _, msg := range messages {
+		if strings.Contains(msg.Body, text) {
+			return true
+		}
+	}
+	return false
 }
 
 func visibleWidth(value string) int {
