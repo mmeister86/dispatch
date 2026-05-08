@@ -216,12 +216,103 @@ func TestPostizCreatePost(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tool := NewPostiz("postiz-key", server.URL)
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
 	result, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"platform":"linkedin","content":"Hallo","scheduled_at":"2026-05-08T09:00:00Z","confirmed":true}`))
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	if !strings.Contains(result, "post-1") {
+		t.Fatalf("result = %s", result)
+	}
+	if strings.Join(calls, ",") != "integrationList,schedulePostTool" {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestPostizCreatePostFallsBackToPublicAPIWhenMCPScheduleToolIsMissing(t *testing.T) {
+	var calls []string
+	var publicCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/mcp/postiz-key":
+			var req struct {
+				Method string `json:"method"`
+				Params struct {
+					Name      string          `json:"name"`
+					Arguments json.RawMessage `json:"arguments"`
+				} `json:"params"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode MCP request: %v", err)
+			}
+			if req.Method == "initialize" {
+				w.Header().Set("MCP-Session-Id", "session-1")
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+				return
+			}
+			if r.Header.Get("MCP-Session-Id") != "session-1" {
+				t.Fatalf("session = %q", r.Header.Get("MCP-Session-Id"))
+			}
+			calls = append(calls, req.Params.Name)
+			switch req.Params.Name {
+			case "integrationList":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"linkedin\"}]"}]}}`))
+			case "schedulePostTool":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Unknown tool: schedulePostTool"}}`))
+			default:
+				t.Fatalf("unexpected MCP tool: %s", req.Params.Name)
+			}
+		case "/public/v1/posts":
+			publicCalled = true
+			if r.Method != http.MethodPost {
+				t.Fatalf("public method = %s", r.Method)
+			}
+			if r.Header.Get("authorization") != "postiz-key" {
+				t.Fatalf("authorization = %q", r.Header.Get("authorization"))
+			}
+			var req struct {
+				Type      string `json:"type"`
+				Date      string `json:"date"`
+				ShortLink bool   `json:"shortLink"`
+				Posts     []struct {
+					Integration struct {
+						ID string `json:"id"`
+					} `json:"integration"`
+					Value []struct {
+						Content string   `json:"content"`
+						Image   []string `json:"image"`
+					} `json:"value"`
+					Settings map[string]any `json:"settings"`
+				} `json:"posts"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode public request: %v", err)
+			}
+			if req.Type != "schedule" || req.Date != "2026-05-08T09:00:00Z" || req.ShortLink {
+				t.Fatalf("public schedule fields = %#v", req)
+			}
+			if len(req.Posts) != 1 || req.Posts[0].Integration.ID != "integration-1" {
+				t.Fatalf("public posts = %#v", req.Posts)
+			}
+			if len(req.Posts[0].Value) != 1 || req.Posts[0].Value[0].Content != "Hallo" {
+				t.Fatalf("public value = %#v", req.Posts[0].Value)
+			}
+			_, _ = w.Write([]byte(`{"id":"post-public-1","state":"QUEUE"}`))
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	result, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"platform":"linkedin","content":"Hallo","scheduled_at":"2026-05-08T09:00:00Z","confirmed":true}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !publicCalled {
+		t.Fatal("public API fallback was not called")
+	}
+	if !strings.Contains(result, "post-public-1") {
 		t.Fatalf("result = %s", result)
 	}
 	if strings.Join(calls, ",") != "integrationList,schedulePostTool" {

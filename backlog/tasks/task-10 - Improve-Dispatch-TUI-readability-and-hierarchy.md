@@ -4,7 +4,7 @@ title: Improve Dispatch TUI readability and hierarchy
 status: In Progress
 assignee: []
 created_date: '2026-05-08 21:03'
-updated_date: '2026-05-08 21:14'
+updated_date: '2026-05-08 21:30'
 labels: []
 dependencies: []
 priority: high
@@ -47,4 +47,8 @@ Clarification: the focused TUI tests were already present in the branch and serv
 Follow-up root cause: transparent terminals showed through because the rendered view exceeded the terminal height and did not explicitly paint every terminal row/cell with the app background. Added paintCanvas plus exact layout height accounting and a regression test for full-width/full-height background rendering.
 
 Follow-up root cause 2: macOS Terminal showed dark text islands because inner label/message/textarea styles set foreground colors without explicit backgrounds. Added explicit backgrounds to nested text styles and textarea focused/blurred styles, plus a regression test that message lines carry the surface background.
+
+Follow-up root cause 3: nearby dark background colors quantized differently in macOS Terminal/Ghostty, making padding areas appear as gray bars. Unified app, surface, header, and footer backgrounds to one color so structure comes from borders/text rather than competing background fills.
+
+Follow-up root cause 4: forcing full-width/background colors created visible panes in terminals whose default background differs from rendered ANSI backgrounds. Switched content, canvas, message, and textarea styles back to foreground-only rendering so the terminal background remains uniform while borders/text carry hierarchy.
 <!-- SECTION:NOTES:END -->

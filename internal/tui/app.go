@@ -121,16 +121,12 @@ func newModel(cfg config.Config, chatAgent *agent.Agent, warnings []string, stor
 
 func styleTextarea(ta *textarea.Model) {
 	base := lipgloss.NewStyle().
-		Background(palette.bg).
 		Foreground(palette.text)
 	prompt := lipgloss.NewStyle().
-		Background(palette.bg).
 		Foreground(palette.green)
 	placeholder := lipgloss.NewStyle().
-		Background(palette.bg).
 		Foreground(palette.dim)
 	cursorLine := lipgloss.NewStyle().
-		Background(palette.bg).
 		Foreground(palette.text)
 
 	ta.FocusedStyle.Base = base
