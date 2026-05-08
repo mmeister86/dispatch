@@ -16,7 +16,13 @@ import (
 	"github.com/matthias/dispatch/internal/provider"
 )
 
-const mcpProtocolVersion = "2025-06-18"
+var mcpProtocolVersions = []string{
+	"2025-11-25",
+	"2025-06-18",
+	"2025-03-26",
+	"2024-11-05",
+	"2024-10-07",
+}
 
 type Postiz struct {
 	apiKey    string
@@ -24,6 +30,7 @@ type Postiz struct {
 	client    *http.Client
 	sessionMu sync.Mutex
 	sessionID string
+	protocol  string
 }
 
 func NewPostiz(apiKey, baseURL string) *Postiz {
@@ -99,10 +106,6 @@ func (p *Postiz) callMCPTool(ctx context.Context, toolName string, arguments any
 	if err != nil {
 		return "", err
 	}
-	sessionID, err := p.ensureMCPSession(ctx, endpoint)
-	if err != nil {
-		return "", err
-	}
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -117,41 +120,111 @@ func (p *Postiz) callMCPTool(ctx context.Context, toolName string, arguments any
 		return "", err
 	}
 
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		session, err := p.ensureMCPSession(ctx, endpoint)
+		if err != nil {
+			return "", err
+		}
+		result, status, bodyText, err := p.postMCPToolCall(ctx, endpoint, body, session)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if attempt == 0 && isExpiredMCPSession(status, bodyText) {
+			p.clearMCPSession()
+			continue
+		}
+		return "", err
+	}
+	return "", lastErr
+}
+
+func (p *Postiz) postMCPToolCall(ctx context.Context, endpoint string, body []byte, session mcpSession) (string, int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", 0, "", err
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json, text/event-stream")
-	req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
-	if sessionID != "" {
-		req.Header.Set("MCP-Session-Id", sessionID)
+	req.Header.Set("MCP-Protocol-Version", session.ProtocolVersion)
+	if session.ID != "" {
+		req.Header.Set("MCP-Session-Id", session.ID)
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", 0, "", err
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	bodyText := strings.TrimSpace(string(respBody))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("Postiz MCP returned %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return "", resp.StatusCode, bodyText, fmt.Errorf("Postiz MCP returned %s: %s", resp.Status, bodyText)
 	}
-	return parseMCPToolResult(respBody)
+	result, err := parseMCPToolResult(respBody)
+	return result, resp.StatusCode, bodyText, err
 }
 
-func (p *Postiz) ensureMCPSession(ctx context.Context, endpoint string) (string, error) {
+func isExpiredMCPSession(status int, body string) bool {
+	if status == http.StatusNotFound {
+		return true
+	}
+	return status == http.StatusBadRequest && strings.Contains(body, "No valid session ID")
+}
+
+func (p *Postiz) clearMCPSession() {
+	p.sessionMu.Lock()
+	defer p.sessionMu.Unlock()
+	p.sessionID = ""
+	p.protocol = ""
+}
+
+type mcpSession struct {
+	ID              string
+	ProtocolVersion string
+}
+
+func (p *Postiz) ensureMCPSession(ctx context.Context, endpoint string) (mcpSession, error) {
 	p.sessionMu.Lock()
 	defer p.sessionMu.Unlock()
 	if p.sessionID != "" {
-		return p.sessionID, nil
+		return mcpSession{ID: p.sessionID, ProtocolVersion: p.protocol}, nil
 	}
 
+	var lastErr error
+	candidates := append([]string(nil), mcpProtocolVersions...)
+	tried := make(map[string]bool)
+	for len(candidates) > 0 {
+		version := candidates[0]
+		candidates = candidates[1:]
+		if tried[version] {
+			continue
+		}
+		tried[version] = true
+		session, supported, err := p.initializeMCPSession(ctx, endpoint, version)
+		if err == nil {
+			p.sessionID = session.ID
+			p.protocol = session.ProtocolVersion
+			return session, nil
+		}
+		lastErr = err
+		if len(supported) > 0 {
+			candidates = commonMCPVersions(supported, tried)
+		}
+	}
+	if lastErr != nil {
+		return mcpSession{}, lastErr
+	}
+	return mcpSession{}, fmt.Errorf("Postiz MCP initialize failed: no compatible protocol version")
+}
+
+func (p *Postiz) initializeMCPSession(ctx context.Context, endpoint, version string) (mcpSession, []string, error) {
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
 		"params": map[string]any{
-			"protocolVersion": mcpProtocolVersion,
+			"protocolVersion": version,
 			"capabilities":    map[string]any{},
 			"clientInfo": map[string]any{
 				"name":    "dispatch",
@@ -161,29 +234,32 @@ func (p *Postiz) ensureMCPSession(ctx context.Context, endpoint string) (string,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return mcpSession{}, nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return mcpSession{}, nil, err
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json, text/event-stream")
-	req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
+	req.Header.Set("MCP-Protocol-Version", version)
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return "", err
+		return mcpSession{}, nil, err
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("Postiz MCP initialize returned %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return mcpSession{}, supportedMCPVersions(respBody), fmt.Errorf("Postiz MCP initialize returned %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
-	if _, err := parseMCPToolResult(respBody); err != nil {
-		return "", err
+	protocol, err := parseMCPInitializeProtocol(respBody)
+	if err != nil {
+		return mcpSession{}, nil, err
 	}
-	p.sessionID = resp.Header.Get("MCP-Session-Id")
-	return p.sessionID, nil
+	if protocol == "" {
+		protocol = version
+	}
+	return mcpSession{ID: resp.Header.Get("MCP-Session-Id"), ProtocolVersion: protocol}, nil, nil
 }
 
 func (p *Postiz) mcpEndpoint() (string, error) {
@@ -248,6 +324,84 @@ func parseMCPToolResult(body []byte) (string, error) {
 		}
 	}
 	return string(resp.Result), nil
+}
+
+func parseMCPInitializeProtocol(body []byte) (string, error) {
+	body = bytes.TrimSpace(body)
+	if bytes.HasPrefix(body, []byte("event:")) || bytes.HasPrefix(body, []byte("data:")) {
+		body = lastSSEData(body)
+	}
+	var resp struct {
+		Result struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		} `json:"result"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", err
+	}
+	if resp.Error != nil {
+		return "", fmt.Errorf("Postiz MCP error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+	return resp.Result.ProtocolVersion, nil
+}
+
+func supportedMCPVersions(body []byte) []string {
+	body = bytes.TrimSpace(body)
+	if bytes.HasPrefix(body, []byte("event:")) || bytes.HasPrefix(body, []byte("data:")) {
+		body = lastSSEData(body)
+	}
+	var resp struct {
+		Error *struct {
+			Message string `json:"message"`
+			Data    struct {
+				Supported []string `json:"supported"`
+			} `json:"data"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || resp.Error == nil {
+		return nil
+	}
+	if len(resp.Error.Data.Supported) > 0 {
+		return resp.Error.Data.Supported
+	}
+	message := resp.Error.Message
+	start := strings.Index(message, "supported versions:")
+	if start == -1 {
+		return nil
+	}
+	start += len("supported versions:")
+	end := strings.Index(message[start:], ")")
+	if end != -1 {
+		message = message[start : start+end]
+	} else {
+		message = message[start:]
+	}
+	var versions []string
+	for _, value := range strings.Split(message, ",") {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			versions = append(versions, value)
+		}
+	}
+	return versions
+}
+
+func commonMCPVersions(supported []string, tried map[string]bool) []string {
+	supportedSet := make(map[string]bool, len(supported))
+	for _, version := range supported {
+		supportedSet[version] = true
+	}
+	var common []string
+	for _, version := range mcpProtocolVersions {
+		if supportedSet[version] && !tried[version] {
+			common = append(common, version)
+		}
+	}
+	return common
 }
 
 func lastSSEData(body []byte) []byte {

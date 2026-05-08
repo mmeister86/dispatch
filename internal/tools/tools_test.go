@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -165,17 +166,17 @@ func TestPostizCreatePost(t *testing.T) {
 			if r.Header.Get("MCP-Session-Id") != "" {
 				t.Fatalf("initialize session = %q", r.Header.Get("MCP-Session-Id"))
 			}
-			if r.Header.Get("MCP-Protocol-Version") != "2025-06-18" || req.Params.ProtocolVersion != "2025-06-18" {
+			if r.Header.Get("MCP-Protocol-Version") != mcpProtocolVersions[0] || req.Params.ProtocolVersion != mcpProtocolVersions[0] {
 				t.Fatalf("protocol version header=%q param=%q", r.Header.Get("MCP-Protocol-Version"), req.Params.ProtocolVersion)
 			}
 			w.Header().Set("MCP-Session-Id", "session-1")
-			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"` + mcpProtocolVersions[0] + `","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
 			return
 		}
 		if r.Header.Get("MCP-Session-Id") != "session-1" {
 			t.Fatalf("session = %q", r.Header.Get("MCP-Session-Id"))
 		}
-		if r.Header.Get("MCP-Protocol-Version") != "2025-06-18" {
+		if r.Header.Get("MCP-Protocol-Version") != mcpProtocolVersions[0] {
 			t.Fatalf("protocol version = %q", r.Header.Get("MCP-Protocol-Version"))
 		}
 		if req.Method != "tools/call" {
@@ -267,6 +268,122 @@ func TestPostizListChannelsUsesMCPIntegrationList(t *testing.T) {
 	}
 	if !strings.Contains(result, "channel-1") {
 		t.Fatalf("result = %s", result)
+	}
+}
+
+func TestPostizListChannelsNegotiatesSupportedMCPVersion(t *testing.T) {
+	var initializeVersions []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/mcp/postiz-key" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		var req struct {
+			Method string `json:"method"`
+			Params struct {
+				ProtocolVersion string `json:"protocolVersion"`
+				Name            string `json:"name"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		switch req.Method {
+		case "initialize":
+			initializeVersions = append(initializeVersions, req.Params.ProtocolVersion)
+			switch req.Params.ProtocolVersion {
+			case "2025-11-25":
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: Unsupported protocol version (supported versions: 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)"},"id":1}`))
+			case "2025-06-18":
+				w.Header().Set("MCP-Session-Id", "session-1")
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+			default:
+				t.Fatalf("unexpected protocol version: %s", req.Params.ProtocolVersion)
+			}
+		case "tools/call":
+			if r.Header.Get("MCP-Session-Id") != "session-1" {
+				t.Fatalf("session = %q", r.Header.Get("MCP-Session-Id"))
+			}
+			if r.Header.Get("MCP-Protocol-Version") != "2025-06-18" {
+				t.Fatalf("tool protocol version = %q", r.Header.Get("MCP-Protocol-Version"))
+			}
+			if req.Params.Name != "integrationList" {
+				t.Fatalf("tool = %q", req.Params.Name)
+			}
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"channel-1\",\"platform\":\"x\"}]"}]}}`))
+		default:
+			t.Fatalf("method = %q", req.Method)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("postiz-key", server.URL)
+	result, err := tool.Execute(context.Background(), "list_channels", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(result, "channel-1") {
+		t.Fatalf("result = %s", result)
+	}
+	if strings.Join(initializeVersions, ",") != "2025-11-25,2025-06-18" {
+		t.Fatalf("initialize versions = %v", initializeVersions)
+	}
+}
+
+func TestPostizListChannelsReinitializesAfterExpiredSession(t *testing.T) {
+	var initializeCount int
+	var toolSessions []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/mcp/postiz-key" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		var req struct {
+			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		switch req.Method {
+		case "initialize":
+			initializeCount++
+			w.Header().Set("MCP-Session-Id", fmt.Sprintf("session-%d", initializeCount))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"` + mcpProtocolVersions[0] + `","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+		case "tools/call":
+			toolSessions = append(toolSessions, r.Header.Get("MCP-Session-Id"))
+			if len(toolSessions) == 1 {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`session expired`))
+				return
+			}
+			if r.Header.Get("MCP-Session-Id") != "session-2" {
+				t.Fatalf("session = %q", r.Header.Get("MCP-Session-Id"))
+			}
+			if req.Params.Name != "integrationList" {
+				t.Fatalf("tool = %q", req.Params.Name)
+			}
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"channel-1\",\"platform\":\"x\"}]"}]}}`))
+		default:
+			t.Fatalf("method = %q", req.Method)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("postiz-key", server.URL)
+	result, err := tool.Execute(context.Background(), "list_channels", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(result, "channel-1") {
+		t.Fatalf("result = %s", result)
+	}
+	if initializeCount != 2 {
+		t.Fatalf("initializeCount = %d", initializeCount)
+	}
+	if strings.Join(toolSessions, ",") != "session-1,session-2" {
+		t.Fatalf("toolSessions = %v", toolSessions)
 	}
 }
 
