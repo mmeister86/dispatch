@@ -24,17 +24,25 @@ var mcpProtocolVersions = []string{
 	"2024-10-07",
 }
 
+const xPostCharLimit = 280
+
 type Postiz struct {
 	apiKey    string
 	baseURL   string
 	client    *http.Client
+	now       func() time.Time
 	sessionMu sync.Mutex
 	sessionID string
 	protocol  string
 }
 
 func NewPostiz(apiKey, baseURL string) *Postiz {
-	return &Postiz{apiKey: apiKey, baseURL: strings.TrimRight(baseURL, "/"), client: &http.Client{Timeout: 30 * time.Second}}
+	return &Postiz{
+		apiKey:  apiKey,
+		baseURL: strings.TrimRight(baseURL, "/"),
+		client:  &http.Client{Timeout: 30 * time.Second},
+		now:     func() time.Time { return time.Now().UTC() },
+	}
 }
 
 func (p *Postiz) Definitions() []provider.ToolDefinition {
@@ -77,23 +85,24 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 				return "", err
 			}
 		}
+		postType, postDate, err := p.postTiming(req.ScheduledAt)
+		if err != nil {
+			return "", err
+		}
 		payload := map[string]any{
 			"socialPost": []map[string]any{{
-				"integrationId": integrationID,
-				"isPremium":     false,
-				"date":          req.ScheduledAt,
-				"shortLink":     false,
-				"type":          "schedule",
-				"postsAndComments": []map[string]any{{
-					"content":     htmlContent(req.Content),
-					"attachments": req.MediaURLs,
-				}},
-				"settings": []map[string]any{},
+				"integrationId":    integrationID,
+				"isPremium":        false,
+				"date":             postDate,
+				"shortLink":        false,
+				"type":             postType,
+				"postsAndComments": mcpPostsAndComments(req.Platform, req.Content, req.MediaURLs),
+				"settings":         mcpPostSettings(req.Platform),
 			}},
 		}
 		result, err := p.callMCPTool(ctx, "schedulePostTool", payload)
 		if err != nil && isUnknownMCPTool(err, "schedulePostTool") {
-			return p.createPostPublic(ctx, integrationID, req.Content, req.ScheduledAt, req.MediaURLs)
+			return p.createPostPublic(ctx, integrationID, req.Platform, postType, postDate, req.Content, req.MediaURLs)
 		}
 		return result, err
 	case "list_posts":
@@ -309,8 +318,14 @@ func (p *Postiz) publicAPIEndpoint() (string, error) {
 		return "", err
 	}
 	path := strings.TrimRight(u.Path, "/")
-	for _, marker := range []string{"/api/mcp/", "/mcp/"} {
-		if idx := strings.Index(path, marker); idx != -1 {
+	if idx := strings.Index(path, "/api/mcp/"); idx != -1 {
+		path = strings.TrimRight(path[:idx]+"/api", "/")
+	} else {
+		for _, marker := range []string{"/mcp/"} {
+			idx := strings.Index(path, marker)
+			if idx == -1 {
+				continue
+			}
 			path = strings.TrimRight(path[:idx], "/")
 			break
 		}
@@ -344,7 +359,7 @@ func (p *Postiz) postizAPIKey() (string, error) {
 	return "", fmt.Errorf("Postiz API Key fehlt")
 }
 
-func (p *Postiz) createPostPublic(ctx context.Context, integrationID, content, scheduledAt string, mediaURLs []string) (string, error) {
+func (p *Postiz) createPostPublic(ctx context.Context, integrationID, platform, postType, postDate, content string, mediaURLs []string) (string, error) {
 	endpoint, err := p.publicAPIEndpoint()
 	if err != nil {
 		return "", err
@@ -354,17 +369,14 @@ func (p *Postiz) createPostPublic(ctx context.Context, integrationID, content, s
 		return "", err
 	}
 	payload := map[string]any{
-		"type":      "schedule",
-		"date":      scheduledAt,
+		"type":      postType,
+		"date":      postDate,
 		"shortLink": false,
 		"tags":      []any{},
 		"posts": []map[string]any{{
 			"integration": map[string]any{"id": integrationID},
-			"value": []map[string]any{{
-				"content": strings.TrimSpace(content),
-				"image":   mediaURLs,
-			}},
-			"settings": map[string]any{},
+			"value":       publicPostValues(platform, content, mediaURLs),
+			"settings":    publicPostSettings(platform),
 		}},
 	}
 	body, err := json.Marshal(payload)
@@ -390,6 +402,161 @@ func (p *Postiz) createPostPublic(ctx context.Context, integrationID, content, s
 	return bodyText, nil
 }
 
+func (p *Postiz) postTiming(scheduledAt string) (string, string, error) {
+	scheduledAt = strings.TrimSpace(scheduledAt)
+	if scheduledAt == "" {
+		return "", "", fmt.Errorf("Postiz create_post braucht scheduled_at")
+	}
+	scheduled, err := time.Parse(time.RFC3339Nano, scheduledAt)
+	if err != nil {
+		return "", "", fmt.Errorf("Postiz create_post scheduled_at ist kein gueltiger ISO-8601 Zeitpunkt: %w", err)
+	}
+	now := p.currentTime()
+	if !scheduled.After(now) {
+		return "now", now.Format(time.RFC3339), nil
+	}
+	return "schedule", scheduled.UTC().Format(time.RFC3339), nil
+}
+
+func (p *Postiz) currentTime() time.Time {
+	if p.now == nil {
+		return time.Now().UTC()
+	}
+	return p.now().UTC()
+}
+
+func mcpPostsAndComments(platform, content string, mediaURLs []string) []map[string]any {
+	parts := postContentParts(platform, content)
+	items := make([]map[string]any, 0, len(parts))
+	for i, part := range parts {
+		attachments := []string{}
+		if i == 0 {
+			attachments = mediaURLs
+		}
+		items = append(items, map[string]any{
+			"content":     htmlContent(part),
+			"attachments": attachments,
+		})
+	}
+	return items
+}
+
+func mcpPostSettings(platform string) []map[string]any {
+	if publicPostPlatform(platform) != "x" {
+		return []map[string]any{}
+	}
+	return []map[string]any{{"key": "who_can_reply_post", "value": "everyone"}}
+}
+
+func publicPostValues(platform, content string, mediaURLs []string) []map[string]any {
+	parts := postContentParts(platform, content)
+	values := make([]map[string]any, 0, len(parts))
+	for i, part := range parts {
+		images := []any{}
+		if i == 0 {
+			images = publicPostImages(mediaURLs)
+		}
+		values = append(values, map[string]any{
+			"content": strings.TrimSpace(part),
+			"image":   images,
+		})
+	}
+	return values
+}
+
+func publicPostImages(mediaURLs []string) []any {
+	if len(mediaURLs) == 0 {
+		return []any{}
+	}
+	images := make([]any, 0, len(mediaURLs))
+	for _, mediaURL := range mediaURLs {
+		mediaURL = strings.TrimSpace(mediaURL)
+		if mediaURL == "" {
+			continue
+		}
+		images = append(images, map[string]any{"path": mediaURL})
+	}
+	if len(images) == 0 {
+		return []any{}
+	}
+	return images
+}
+
+func publicPostSettings(platform string) map[string]any {
+	platform = publicPostPlatform(platform)
+	if platform == "" {
+		return map[string]any{}
+	}
+	settings := map[string]any{"__type": platform}
+	if platform == "x" {
+		settings["who_can_reply_post"] = "everyone"
+	}
+	return settings
+}
+
+func publicPostPlatform(platform string) string {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "twitter":
+		return "x"
+	default:
+		return strings.ToLower(strings.TrimSpace(platform))
+	}
+}
+
+func postContentParts(platform, content string) []string {
+	content = strings.TrimSpace(content)
+	if content == "" || publicPostPlatform(platform) != "x" || len([]rune(content)) <= xPostCharLimit {
+		return []string{content}
+	}
+	return splitTextByRuneLimit(content, xPostCharLimit)
+}
+
+func splitTextByRuneLimit(text string, limit int) []string {
+	var parts []string
+	var current string
+	for _, word := range strings.Fields(text) {
+		if len([]rune(word)) > limit {
+			if current != "" {
+				parts = append(parts, current)
+				current = ""
+			}
+			parts = append(parts, splitLongWord(word, limit)...)
+			continue
+		}
+		if current == "" {
+			current = word
+			continue
+		}
+		if len([]rune(current))+1+len([]rune(word)) <= limit {
+			current += " " + word
+			continue
+		}
+		parts = append(parts, current)
+		current = word
+	}
+	if current != "" {
+		parts = append(parts, current)
+	}
+	if len(parts) == 0 {
+		return []string{""}
+	}
+	return parts
+}
+
+func splitLongWord(word string, limit int) []string {
+	runes := []rune(word)
+	parts := make([]string, 0, (len(runes)+limit-1)/limit)
+	for len(runes) > 0 {
+		end := limit
+		if len(runes) < end {
+			end = len(runes)
+		}
+		parts = append(parts, string(runes[:end]))
+		runes = runes[end:]
+	}
+	return parts
+}
+
 func parseMCPToolResult(body []byte) (string, error) {
 	body = bytes.TrimSpace(body)
 	if bytes.HasPrefix(body, []byte("event:")) || bytes.HasPrefix(body, []byte("data:")) {
@@ -409,6 +576,7 @@ func parseMCPToolResult(body []byte) (string, error) {
 		return "", fmt.Errorf("Postiz MCP error %d: %s", resp.Error.Code, resp.Error.Message)
 	}
 	var result struct {
+		IsError bool `json:"isError"`
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
@@ -416,6 +584,21 @@ func parseMCPToolResult(body []byte) (string, error) {
 		StructuredContent json.RawMessage `json:"structuredContent"`
 	}
 	if err := json.Unmarshal(resp.Result, &result); err == nil {
+		if result.IsError {
+			var texts []string
+			for _, item := range result.Content {
+				if item.Text != "" {
+					texts = append(texts, item.Text)
+				}
+			}
+			if len(texts) > 0 {
+				return "", fmt.Errorf("Postiz MCP tool result error: %s", strings.Join(texts, "\n"))
+			}
+			if len(result.StructuredContent) > 0 {
+				return "", fmt.Errorf("Postiz MCP tool result error: %s", string(result.StructuredContent))
+			}
+			return "", fmt.Errorf("Postiz MCP tool result error")
+		}
 		if len(result.StructuredContent) > 0 {
 			return string(result.StructuredContent), nil
 		}

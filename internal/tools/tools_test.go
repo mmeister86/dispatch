@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGitHubRecentCommits(t *testing.T) {
@@ -217,6 +218,7 @@ func TestPostizCreatePost(t *testing.T) {
 	defer server.Close()
 
 	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	tool.now = func() time.Time { return time.Date(2026, 5, 7, 20, 0, 0, 0, time.UTC) }
 	result, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"platform":"linkedin","content":"Hallo","scheduled_at":"2026-05-08T09:00:00Z","confirmed":true}`))
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -229,9 +231,121 @@ func TestPostizCreatePost(t *testing.T) {
 	}
 }
 
+func TestPostizCreatePostSplitsLongXContentIntoMCPThread(t *testing.T) {
+	longContent := strings.Repeat("alpha ", 60)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			Params struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Method == "initialize" {
+			w.Header().Set("MCP-Session-Id", "session-1")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+			return
+		}
+		switch req.Params.Name {
+		case "integrationList":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"x\"}]"}]}}`))
+		case "schedulePostTool":
+			var args struct {
+				SocialPost []struct {
+					PostsAndComments []struct {
+						Content string `json:"content"`
+					} `json:"postsAndComments"`
+					Settings []struct {
+						Key   string `json:"key"`
+						Value string `json:"value"`
+					} `json:"settings"`
+				} `json:"socialPost"`
+			}
+			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+				t.Fatalf("decode schedule args: %v", err)
+			}
+			if len(args.SocialPost) != 1 || len(args.SocialPost[0].PostsAndComments) < 2 {
+				t.Fatalf("expected thread posts, got %#v", args.SocialPost)
+			}
+			for _, item := range args.SocialPost[0].PostsAndComments {
+				text := strings.TrimSuffix(strings.TrimPrefix(item.Content, "<p>"), "</p>")
+				if len([]rune(text)) > 280 {
+					t.Fatalf("thread item too long: %d chars in %q", len([]rune(text)), text)
+				}
+			}
+			if len(args.SocialPost[0].Settings) != 1 || args.SocialPost[0].Settings[0].Key != "who_can_reply_post" || args.SocialPost[0].Settings[0].Value != "everyone" {
+				t.Fatalf("settings = %#v", args.SocialPost[0].Settings)
+			}
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"{\"id\":\"post-1\",\"status\":\"scheduled\"}"}]}}`))
+		default:
+			t.Fatalf("unexpected MCP tool: %s", req.Params.Name)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	_, err := tool.Execute(context.Background(), "create_post", json.RawMessage(fmt.Sprintf(`{"platform":"x","content":%q,"scheduled_at":"2026-05-08T09:00:00Z","confirmed":true}`, longContent)))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+}
+
+func TestPostizCreatePostPublishesNowWhenScheduledAtIsPastForMCP(t *testing.T) {
+	now := time.Date(2026, 5, 8, 20, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			Params struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Method == "initialize" {
+			w.Header().Set("MCP-Session-Id", "session-1")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+			return
+		}
+		switch req.Params.Name {
+		case "integrationList":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"x\"}]"}]}}`))
+		case "schedulePostTool":
+			var args struct {
+				SocialPost []struct {
+					Type string `json:"type"`
+					Date string `json:"date"`
+				} `json:"socialPost"`
+			}
+			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+				t.Fatalf("decode schedule args: %v", err)
+			}
+			if len(args.SocialPost) != 1 || args.SocialPost[0].Type != "now" || args.SocialPost[0].Date != now.Format(time.RFC3339) {
+				t.Fatalf("socialPost = %#v", args.SocialPost)
+			}
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"{\"id\":\"post-1\",\"status\":\"published\"}"}]}}`))
+		default:
+			t.Fatalf("unexpected MCP tool: %s", req.Params.Name)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	tool.now = func() time.Time { return now }
+	_, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"platform":"x","content":"Hallo","scheduled_at":"2000-01-01T00:00:00Z","confirmed":true}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+}
+
 func TestPostizCreatePostFallsBackToPublicAPIWhenMCPScheduleToolIsMissing(t *testing.T) {
 	var calls []string
 	var publicCalled bool
+	longContent := strings.Repeat("alpha ", 60)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/mcp/postiz-key":
@@ -256,13 +370,13 @@ func TestPostizCreatePostFallsBackToPublicAPIWhenMCPScheduleToolIsMissing(t *tes
 			calls = append(calls, req.Params.Name)
 			switch req.Params.Name {
 			case "integrationList":
-				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"linkedin\"}]"}]}}`))
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"x\"}]"}]}}`))
 			case "schedulePostTool":
 				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Unknown tool: schedulePostTool"}}`))
 			default:
 				t.Fatalf("unexpected MCP tool: %s", req.Params.Name)
 			}
-		case "/public/v1/posts":
+		case "/api/public/v1/posts":
 			publicCalled = true
 			if r.Method != http.MethodPost {
 				t.Fatalf("public method = %s", r.Method)
@@ -279,10 +393,13 @@ func TestPostizCreatePostFallsBackToPublicAPIWhenMCPScheduleToolIsMissing(t *tes
 						ID string `json:"id"`
 					} `json:"integration"`
 					Value []struct {
-						Content string   `json:"content"`
-						Image   []string `json:"image"`
+						Content string `json:"content"`
+						Image   []any  `json:"image"`
 					} `json:"value"`
-					Settings map[string]any `json:"settings"`
+					Settings struct {
+						Type            string `json:"__type"`
+						WhoCanReplyPost string `json:"who_can_reply_post"`
+					} `json:"settings"`
 				} `json:"posts"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -294,9 +411,137 @@ func TestPostizCreatePostFallsBackToPublicAPIWhenMCPScheduleToolIsMissing(t *tes
 			if len(req.Posts) != 1 || req.Posts[0].Integration.ID != "integration-1" {
 				t.Fatalf("public posts = %#v", req.Posts)
 			}
-			if len(req.Posts[0].Value) != 1 || req.Posts[0].Value[0].Content != "Hallo" {
+			if len(req.Posts[0].Value) < 2 {
 				t.Fatalf("public value = %#v", req.Posts[0].Value)
 			}
+			for _, value := range req.Posts[0].Value {
+				if len([]rune(value.Content)) > 280 {
+					t.Fatalf("thread item too long: %d chars in %q", len([]rune(value.Content)), value.Content)
+				}
+				if value.Image == nil {
+					t.Fatalf("public image must be an empty array, got nil")
+				}
+			}
+			if req.Posts[0].Settings.Type != "x" || req.Posts[0].Settings.WhoCanReplyPost != "everyone" {
+				t.Fatalf("public settings = %#v", req.Posts[0].Settings)
+			}
+			_, _ = w.Write([]byte(`{"id":"post-public-1","state":"QUEUE"}`))
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	tool.now = func() time.Time { return time.Date(2026, 5, 7, 20, 0, 0, 0, time.UTC) }
+	result, err := tool.Execute(context.Background(), "create_post", json.RawMessage(fmt.Sprintf(`{"platform":"x","content":%q,"scheduled_at":"2026-05-08T09:00:00Z","confirmed":true}`, longContent)))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !publicCalled {
+		t.Fatal("public API fallback was not called")
+	}
+	if !strings.Contains(result, "post-public-1") {
+		t.Fatalf("result = %s", result)
+	}
+	if strings.Join(calls, ",") != "integrationList,schedulePostTool" {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestPostizCreatePostPublishesNowWhenScheduledAtIsPastForPublicFallback(t *testing.T) {
+	now := time.Date(2026, 5, 8, 20, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/mcp/postiz-key":
+			var req struct {
+				Method string `json:"method"`
+				Params struct {
+					Name string `json:"name"`
+				} `json:"params"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode MCP request: %v", err)
+			}
+			if req.Method == "initialize" {
+				w.Header().Set("MCP-Session-Id", "session-1")
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+				return
+			}
+			switch req.Params.Name {
+			case "integrationList":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"x\"}]"}]}}`))
+			case "schedulePostTool":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Unknown tool: schedulePostTool"}}`))
+			default:
+				t.Fatalf("unexpected MCP tool: %s", req.Params.Name)
+			}
+		case "/api/public/v1/posts":
+			var req struct {
+				Type string `json:"type"`
+				Date string `json:"date"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode public request: %v", err)
+			}
+			if req.Type != "now" || req.Date != now.Format(time.RFC3339) {
+				t.Fatalf("public timing = %#v", req)
+			}
+			_, _ = w.Write([]byte(`{"id":"post-public-1","state":"PUBLISHED"}`))
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	tool.now = func() time.Time { return now }
+	_, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"platform":"x","content":"Hallo","scheduled_at":"2000-01-01T00:00:00Z","confirmed":true}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+}
+
+func TestPostizPublicAPIEndpointKeepsAPIBaseForSelfHostedMCPURL(t *testing.T) {
+	tool := NewPostiz("", "https://postiz.example/api/mcp/postiz-key")
+	endpoint, err := tool.publicAPIEndpoint()
+	if err != nil {
+		t.Fatalf("publicAPIEndpoint returned error: %v", err)
+	}
+	if endpoint != "https://postiz.example/api/public/v1/posts" {
+		t.Fatalf("endpoint = %q", endpoint)
+	}
+}
+
+func TestPostizCreatePostFallsBackWhenMCPScheduleToolReturnsToolErrorResult(t *testing.T) {
+	var publicCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/mcp/postiz-key":
+			var req struct {
+				Method string `json:"method"`
+				Params struct {
+					Name string `json:"name"`
+				} `json:"params"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode MCP request: %v", err)
+			}
+			if req.Method == "initialize" {
+				w.Header().Set("MCP-Session-Id", "session-1")
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+				return
+			}
+			switch req.Params.Name {
+			case "integrationList":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"linkedin\"}]"}]}}`))
+			case "schedulePostTool":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"isError":true,"content":[{"type":"text","text":"Unknown tool: schedulePostTool"}]}}`))
+			default:
+				t.Fatalf("unexpected MCP tool: %s", req.Params.Name)
+			}
+		case "/api/public/v1/posts":
+			publicCalled = true
 			_, _ = w.Write([]byte(`{"id":"post-public-1","state":"QUEUE"}`))
 		default:
 			t.Fatalf("path = %s", r.URL.Path)
@@ -314,9 +559,6 @@ func TestPostizCreatePostFallsBackToPublicAPIWhenMCPScheduleToolIsMissing(t *tes
 	}
 	if !strings.Contains(result, "post-public-1") {
 		t.Fatalf("result = %s", result)
-	}
-	if strings.Join(calls, ",") != "integrationList,schedulePostTool" {
-		t.Fatalf("calls = %v", calls)
 	}
 }
 
