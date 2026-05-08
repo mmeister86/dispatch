@@ -5,7 +5,7 @@ api_key = "" # or env: LLM_API_KEY
 
 [postiz]
 api_key = "" # or env: POSTIZ_API_KEY
-base_url = "https://app.postiz.com"
+base_url = "https://api.postiz.com"
 
 [github]
 token = "" # or env: GITHUB_TOKEN

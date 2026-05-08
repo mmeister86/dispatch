@@ -51,7 +51,7 @@ func Default() Config {
 			Model:    "claude-sonnet-4-6",
 		},
 		Postiz: PostizConfig{
-			BaseURL: "https://app.postiz.com",
+			BaseURL: "https://api.postiz.com",
 		},
 		Search: SearchConfig{
 			Provider: "perplexity",

@@ -53,7 +53,7 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 		if !req.Confirmed {
 			return "", fmt.Errorf("Postiz create_post erfordert confirmed=true nach expliziter User-Bestaetigung")
 		}
-		return p.post(ctx, "/api/posts", args)
+		return p.post(ctx, "/public/v1/posts", args)
 	case "list_posts":
 		var req struct {
 			Status string `json:"status"`
@@ -63,10 +63,10 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 		if req.Limit <= 0 || req.Limit > 20 {
 			req.Limit = 20
 		}
-		path := fmt.Sprintf("/api/posts?status=%s&limit=%d", req.Status, req.Limit)
+		path := fmt.Sprintf("/public/v1/posts?status=%s&limit=%d", req.Status, req.Limit)
 		return p.get(ctx, path)
 	case "list_channels":
-		return p.get(ctx, "/api/integrations")
+		return p.get(ctx, "/public/v1/integrations")
 	default:
 		return "", fmt.Errorf("Postiz Tool %q unbekannt", name)
 	}
@@ -78,7 +78,7 @@ func (p *Postiz) post(ctx context.Context, path string, payload []byte) (string,
 		return "", err
 	}
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("authorization", "Bearer "+p.apiKey)
+	req.Header.Set("authorization", p.apiKey)
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return "", err
@@ -96,7 +96,7 @@ func (p *Postiz) get(ctx context.Context, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("authorization", "Bearer "+p.apiKey)
+	req.Header.Set("authorization", p.apiKey)
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return "", err

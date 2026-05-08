@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/matthias/dispatch/config"
 	"github.com/matthias/dispatch/internal/agent"
 	"github.com/matthias/dispatch/internal/provider"
@@ -118,6 +119,71 @@ func TestFormatToolResultShortensVerboseOutput(t *testing.T) {
 	}
 	if !strings.Contains(body, "… +2 Zeilen") {
 		t.Fatalf("tool result should mention omitted lines: %q", body)
+	}
+}
+
+func TestAgentMarkdownIsCleanedForTerminalReading(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.width = 100
+	m.height = 24
+	m.layout()
+
+	rendered := m.renderMessage(chatMessage{
+		Kind: kindAgent,
+		Body: "### Inaktive Repos\n---\n**Fazit:** Bitte als Post vorbereiten.",
+	})
+
+	if strings.Contains(rendered, "###") || strings.Contains(rendered, "**") {
+		t.Fatalf("agent markdown markers should be cleaned from terminal output: %q", rendered)
+	}
+	if strings.Contains(rendered, "---") {
+		t.Fatalf("horizontal markdown rules should render as terminal separators: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Inaktive Repos") || !strings.Contains(rendered, "Fazit:") {
+		t.Fatalf("rendered message lost important content: %q", rendered)
+	}
+}
+
+func TestAgentMessageUsesReadableLineWidth(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.width = 180
+	m.height = 24
+	m.layout()
+
+	rendered := m.renderMessage(chatMessage{
+		Kind: kindAgent,
+		Body: "Fazit: " + strings.Repeat("dieser Abschnitt bleibt auch in sehr breiten Terminals gut lesbar ", 4),
+	})
+
+	for _, line := range strings.Split(rendered, "\n") {
+		if width := visibleWidth(line); width > 116 {
+			t.Fatalf("rendered line width = %d, want <= 116\nline: %q\nrendered:\n%s", width, line, rendered)
+		}
+	}
+}
+
+func TestToolResultRendersAsCompactStatusBlock(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.width = 100
+	m.height = 24
+	m.layout()
+
+	rendered := m.renderMessage(chatMessage{
+		Kind: kindTool,
+		Body: formatToolResult(provider.ToolResult{
+			Name:   "get_activity",
+			Result: strings.Join([]string{"one", "two", "three", "four", "five", "six"}, "\n"),
+		}),
+	})
+
+	if strings.Contains(rendered, "▶ TOOL") {
+		t.Fatalf("tool label should be calmer than the old loud marker: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Tool · get_activity") {
+		t.Fatalf("tool result should expose the tool name in a compact label: %q", rendered)
+	}
+	if strings.Contains(rendered, "six") {
+		t.Fatalf("tool result preview should be shorter than full verbose output: %q", rendered)
 	}
 }
 
@@ -240,4 +306,8 @@ func teaKey(value string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlL}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
+}
+
+func visibleWidth(value string) int {
+	return lipgloss.Width(value)
 }
