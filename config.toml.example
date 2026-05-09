@@ -5,13 +5,13 @@ api_key = "" # or env: LLM_API_KEY
 
 [postiz]
 api_key = "" # or env: POSTIZ_API_KEY
-base_url = "https://api.postiz.com" # self-hosted example: https://postiz.example.com
+base_url = "https://api.postiz.com" # or direct MCP/self-hosted URL via POSTIZ_BASE_URL
 
 [github]
-token = "" # or env: GITHUB_TOKEN
+token = "" # or env: GITHUB_TOKEN; read access is enough for current tools
 
 [search]
-provider = "perplexity" # perplexity | brave | serpapi
-api_key = "" # or env: SEARCH_API_KEY
+provider = "perplexity" # currently Perplexity/Sonar-oriented
+api_key = "" # optional; or env: SEARCH_API_KEY
 model = "sonar-pro"
 recency = "week" # hour | day | week | month
