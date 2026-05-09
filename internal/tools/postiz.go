@@ -51,10 +51,11 @@ func (p *Postiz) Definitions() []provider.ToolDefinition {
 			"integration_id": stringProp("Postiz Integration-ID aus list_channels. Wenn leer, wird platform zum Suchen genutzt."),
 			"platform":       stringProp("Zielplattform, z.B. linkedin oder twitter"),
 			"content":        stringProp("Post-Text"),
+			"thread_parts":   stringArrayProp("Optionale X/Twitter-Thread-Tweets; jeder Eintrag wird ein Tweet im selben Thread"),
 			"scheduled_at":   stringProp("ISO-8601 Zeitpunkt"),
 			"media_urls":     stringArrayProp("Optionale Medien-URLs"),
 			"confirmed":      boolProp("Muss true sein, nachdem der User die Vorschau explizit bestaetigt hat"),
-		}, "content", "scheduled_at", "confirmed")},
+		}, "scheduled_at", "confirmed")},
 		{Name: "list_channels", Description: "Listet verbundene Postiz-Social-Channels.", Schema: objectSchema(map[string]any{})},
 	}
 }
@@ -69,6 +70,7 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 			IntegrationID string   `json:"integration_id"`
 			Platform      string   `json:"platform"`
 			Content       string   `json:"content"`
+			ThreadParts   []string `json:"thread_parts"`
 			ScheduledAt   string   `json:"scheduled_at"`
 			MediaURLs     []string `json:"media_urls"`
 			Confirmed     bool     `json:"confirmed"`
@@ -77,9 +79,12 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 		if !req.Confirmed {
 			return "", fmt.Errorf("Postiz create_post erfordert confirmed=true nach expliziter User-Bestaetigung")
 		}
+		parts, err := createPostParts(req.Platform, req.Content, req.ThreadParts)
+		if err != nil {
+			return "", err
+		}
 		integrationID := strings.TrimSpace(req.IntegrationID)
 		if integrationID == "" {
-			var err error
 			integrationID, err = p.integrationIDForPlatform(ctx, req.Platform)
 			if err != nil {
 				return "", err
@@ -96,13 +101,13 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 				"date":             postDate,
 				"shortLink":        false,
 				"type":             postType,
-				"postsAndComments": mcpPostsAndComments(req.Platform, req.Content, req.MediaURLs),
+				"postsAndComments": mcpPostsAndComments(parts, req.MediaURLs),
 				"settings":         mcpPostSettings(req.Platform),
 			}},
 		}
 		result, err := p.callMCPTool(ctx, "schedulePostTool", payload)
 		if err != nil && isUnknownMCPTool(err, "schedulePostTool") {
-			return p.createPostPublic(ctx, integrationID, req.Platform, postType, postDate, req.Content, req.MediaURLs)
+			return p.createPostPublic(ctx, integrationID, req.Platform, postType, postDate, parts, req.MediaURLs)
 		}
 		return result, err
 	case "list_posts":
@@ -359,7 +364,7 @@ func (p *Postiz) postizAPIKey() (string, error) {
 	return "", fmt.Errorf("Postiz API Key fehlt")
 }
 
-func (p *Postiz) createPostPublic(ctx context.Context, integrationID, platform, postType, postDate, content string, mediaURLs []string) (string, error) {
+func (p *Postiz) createPostPublic(ctx context.Context, integrationID, platform, postType, postDate string, parts []string, mediaURLs []string) (string, error) {
 	endpoint, err := p.publicAPIEndpoint()
 	if err != nil {
 		return "", err
@@ -375,7 +380,7 @@ func (p *Postiz) createPostPublic(ctx context.Context, integrationID, platform, 
 		"tags":      []any{},
 		"posts": []map[string]any{{
 			"integration": map[string]any{"id": integrationID},
-			"value":       publicPostValues(platform, content, mediaURLs),
+			"value":       publicPostValues(parts, mediaURLs),
 			"settings":    publicPostSettings(platform),
 		}},
 	}
@@ -425,8 +430,7 @@ func (p *Postiz) currentTime() time.Time {
 	return p.now().UTC()
 }
 
-func mcpPostsAndComments(platform, content string, mediaURLs []string) []map[string]any {
-	parts := postContentParts(platform, content)
+func mcpPostsAndComments(parts []string, mediaURLs []string) []map[string]any {
 	items := make([]map[string]any, 0, len(parts))
 	for i, part := range parts {
 		attachments := []string{}
@@ -448,8 +452,7 @@ func mcpPostSettings(platform string) []map[string]any {
 	return []map[string]any{{"key": "who_can_reply_post", "value": "everyone"}}
 }
 
-func publicPostValues(platform, content string, mediaURLs []string) []map[string]any {
-	parts := postContentParts(platform, content)
+func publicPostValues(parts []string, mediaURLs []string) []map[string]any {
 	values := make([]map[string]any, 0, len(parts))
 	for i, part := range parts {
 		images := []any{}
@@ -501,6 +504,35 @@ func publicPostPlatform(platform string) string {
 	default:
 		return strings.ToLower(strings.TrimSpace(platform))
 	}
+}
+
+func createPostParts(platform, content string, threadParts []string) ([]string, error) {
+	content = strings.TrimSpace(content)
+	hasThreadParts := len(threadParts) > 0
+	if content != "" && hasThreadParts {
+		return nil, fmt.Errorf("Postiz create_post braucht entweder content oder thread_parts, nicht beides")
+	}
+	if hasThreadParts {
+		if publicPostPlatform(platform) != "x" {
+			return nil, fmt.Errorf("Postiz create_post thread_parts wird nur fuer x/twitter unterstuetzt")
+		}
+		parts := make([]string, 0, len(threadParts))
+		for i, part := range threadParts {
+			trimmed := strings.TrimSpace(part)
+			if trimmed == "" {
+				return nil, fmt.Errorf("Postiz create_post thread_parts[%d] ist leer", i)
+			}
+			if length := len([]rune(trimmed)); length > xPostCharLimit {
+				return nil, fmt.Errorf("Postiz create_post thread_parts[%d] hat %d Zeichen; maximal erlaubt sind %d", i, length, xPostCharLimit)
+			}
+			parts = append(parts, trimmed)
+		}
+		return parts, nil
+	}
+	if content == "" {
+		return nil, fmt.Errorf("Postiz create_post braucht content oder thread_parts")
+	}
+	return postContentParts(platform, content), nil
 }
 
 func postContentParts(platform, content string) []string {
@@ -705,8 +737,9 @@ func lastSSEData(body []byte) []byte {
 }
 
 func (p *Postiz) integrationIDForPlatform(ctx context.Context, platform string) (string, error) {
-	platform = strings.ToLower(strings.TrimSpace(platform))
-	if platform == "" {
+	rawPlatform := strings.ToLower(strings.TrimSpace(platform))
+	platform = publicPostPlatform(platform)
+	if rawPlatform == "" {
 		return "", fmt.Errorf("Postiz create_post braucht integration_id oder platform")
 	}
 	result, err := p.callMCPTool(ctx, "integrationList", map[string]any{})
@@ -723,17 +756,20 @@ func (p *Postiz) integrationIDForPlatform(ctx context.Context, platform string) 
 	}
 	var matches []string
 	for _, integration := range integrations {
-		if strings.EqualFold(integration.ID, platform) ||
+		if strings.EqualFold(integration.ID, rawPlatform) ||
+			strings.EqualFold(integration.ID, platform) ||
+			strings.EqualFold(integration.Platform, rawPlatform) ||
 			strings.EqualFold(integration.Platform, platform) ||
+			strings.EqualFold(integration.Name, rawPlatform) ||
 			strings.EqualFold(integration.Name, platform) {
 			matches = append(matches, integration.ID)
 		}
 	}
 	if len(matches) == 0 {
-		return "", fmt.Errorf("keine Postiz Integration fuer %q gefunden; nutze list_channels und uebergib integration_id", platform)
+		return "", fmt.Errorf("keine Postiz Integration fuer %q gefunden; nutze list_channels und uebergib integration_id", rawPlatform)
 	}
 	if len(matches) > 1 {
-		return "", fmt.Errorf("mehrere Postiz Integrationen fuer %q gefunden; nutze list_channels und uebergib integration_id", platform)
+		return "", fmt.Errorf("mehrere Postiz Integrationen fuer %q gefunden; nutze list_channels und uebergib integration_id", rawPlatform)
 	}
 	return matches[0], nil
 }

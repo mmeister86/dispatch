@@ -231,6 +231,127 @@ func TestPostizCreatePost(t *testing.T) {
 	}
 }
 
+func TestPostizCreatePostSchemaSupportsThreadParts(t *testing.T) {
+	tool := NewPostiz("postiz-key", "https://postiz.example")
+	var createPostSchema map[string]any
+	for _, definition := range tool.Definitions() {
+		if definition.Name == "create_post" {
+			createPostSchema = definition.Schema
+			break
+		}
+	}
+	if createPostSchema == nil {
+		t.Fatal("create_post definition not found")
+	}
+	properties, ok := createPostSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties = %#v", createPostSchema["properties"])
+	}
+	threadParts, ok := properties["thread_parts"].(map[string]any)
+	if !ok {
+		t.Fatalf("thread_parts property missing from schema: %#v", properties)
+	}
+	if threadParts["type"] != "array" {
+		t.Fatalf("thread_parts type = %#v", threadParts["type"])
+	}
+	items, ok := threadParts["items"].(map[string]any)
+	if !ok || items["type"] != "string" {
+		t.Fatalf("thread_parts items = %#v", threadParts["items"])
+	}
+	required, ok := createPostSchema["required"].([]string)
+	if !ok {
+		t.Fatalf("required = %#v", createPostSchema["required"])
+	}
+	for _, field := range required {
+		if field == "content" {
+			t.Fatalf("content should not be required when thread_parts is available: %#v", required)
+		}
+	}
+	if !stringSliceContains(required, "scheduled_at") || !stringSliceContains(required, "confirmed") {
+		t.Fatalf("required = %#v", required)
+	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPostizCreatePostUsesExplicitThreadPartsForMCPThread(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			Params struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Method == "initialize" {
+			w.Header().Set("MCP-Session-Id", "session-1")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+			return
+		}
+		switch req.Params.Name {
+		case "integrationList":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"x\"}]"}]}}`))
+		case "schedulePostTool":
+			var args struct {
+				SocialPost []struct {
+					PostsAndComments []struct {
+						Content     string   `json:"content"`
+						Attachments []string `json:"attachments"`
+					} `json:"postsAndComments"`
+				} `json:"socialPost"`
+			}
+			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+				t.Fatalf("decode schedule args: %v", err)
+			}
+			if len(args.SocialPost) != 1 {
+				t.Fatalf("socialPost = %#v", args.SocialPost)
+			}
+			items := args.SocialPost[0].PostsAndComments
+			if len(items) != 3 {
+				t.Fatalf("postsAndComments = %#v", items)
+			}
+			wantContent := []string{"<p>First tweet</p>", "<p>Second tweet</p>", "<p>Final tweet</p>"}
+			for i, item := range items {
+				if item.Content != wantContent[i] {
+					t.Fatalf("item %d content = %q", i, item.Content)
+				}
+				if i == 0 {
+					if len(item.Attachments) != 1 || item.Attachments[0] != "https://example.com/image.png" {
+						t.Fatalf("first attachments = %#v", item.Attachments)
+					}
+					continue
+				}
+				if len(item.Attachments) != 0 {
+					t.Fatalf("item %d attachments = %#v", i, item.Attachments)
+				}
+			}
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"{\"id\":\"post-1\",\"status\":\"scheduled\"}"}]}}`))
+		default:
+			t.Fatalf("unexpected MCP tool: %s", req.Params.Name)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	result, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"platform":"x","thread_parts":[" First tweet ","Second tweet","Final tweet"],"scheduled_at":"2026-05-08T09:00:00Z","media_urls":["https://example.com/image.png"],"confirmed":true}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(result, "post-1") {
+		t.Fatalf("result = %s", result)
+	}
+}
+
 func TestPostizCreatePostSplitsLongXContentIntoMCPThread(t *testing.T) {
 	longContent := strings.Repeat("alpha ", 60)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -446,6 +567,144 @@ func TestPostizCreatePostFallsBackToPublicAPIWhenMCPScheduleToolIsMissing(t *tes
 	}
 	if strings.Join(calls, ",") != "integrationList,schedulePostTool" {
 		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestPostizCreatePostUsesExplicitThreadPartsForPublicAPIThreadFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/mcp/postiz-key":
+			var req struct {
+				Method string `json:"method"`
+				Params struct {
+					Name string `json:"name"`
+				} `json:"params"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode MCP request: %v", err)
+			}
+			if req.Method == "initialize" {
+				w.Header().Set("MCP-Session-Id", "session-1")
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+				return
+			}
+			switch req.Params.Name {
+			case "integrationList":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":\"integration-1\",\"name\":\"Work\",\"platform\":\"x\"}]"}]}}`))
+			case "schedulePostTool":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Unknown tool: schedulePostTool"}}`))
+			default:
+				t.Fatalf("unexpected MCP tool: %s", req.Params.Name)
+			}
+		case "/api/public/v1/posts":
+			var req struct {
+				Posts []struct {
+					Value []struct {
+						Content string `json:"content"`
+						Image   []any  `json:"image"`
+					} `json:"value"`
+					Settings struct {
+						Type            string `json:"__type"`
+						WhoCanReplyPost string `json:"who_can_reply_post"`
+					} `json:"settings"`
+				} `json:"posts"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode public request: %v", err)
+			}
+			if len(req.Posts) != 1 {
+				t.Fatalf("posts = %#v", req.Posts)
+			}
+			values := req.Posts[0].Value
+			if len(values) != 3 {
+				t.Fatalf("value = %#v", values)
+			}
+			wantContent := []string{"First tweet", "Second tweet", "Final tweet"}
+			for i, value := range values {
+				if value.Content != wantContent[i] {
+					t.Fatalf("value %d content = %q", i, value.Content)
+				}
+				if value.Image == nil {
+					t.Fatalf("value %d image must be an array", i)
+				}
+				if i == 0 && len(value.Image) != 1 {
+					t.Fatalf("first value image = %#v", value.Image)
+				}
+				if i > 0 && len(value.Image) != 0 {
+					t.Fatalf("value %d image = %#v", i, value.Image)
+				}
+			}
+			if req.Posts[0].Settings.Type != "x" || req.Posts[0].Settings.WhoCanReplyPost != "everyone" {
+				t.Fatalf("settings = %#v", req.Posts[0].Settings)
+			}
+			_, _ = w.Write([]byte(`{"id":"post-public-1","state":"QUEUE"}`))
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	result, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"platform":"twitter","thread_parts":["First tweet","Second tweet"," Final tweet "],"scheduled_at":"2026-05-08T09:00:00Z","media_urls":["https://example.com/image.png"],"confirmed":true}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(result, "post-public-1") {
+		t.Fatalf("result = %s", result)
+	}
+}
+
+func TestPostizCreatePostRejectsOverlongExplicitThreadPart(t *testing.T) {
+	var called bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		t.Fatalf("Postiz should not be called for invalid thread_parts")
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("postiz-key", server.URL)
+	overLimit := strings.Repeat("a", xPostCharLimit+1)
+	_, err := tool.Execute(context.Background(), "create_post", json.RawMessage(fmt.Sprintf(`{"integration_id":"integration-1","platform":"x","thread_parts":["%s"],"scheduled_at":"2026-05-08T09:00:00Z","confirmed":true}`, overLimit)))
+	if err == nil {
+		t.Fatal("expected overlong thread part error")
+	}
+	if !strings.Contains(err.Error(), "thread_parts[0]") || !strings.Contains(err.Error(), "280") {
+		t.Fatalf("err = %v", err)
+	}
+	if called {
+		t.Fatal("Postiz was called")
+	}
+}
+
+func TestPostizCreatePostRejectsThreadPartsForNonXPlatform(t *testing.T) {
+	var called bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		t.Fatalf("Postiz should not be called for unsupported thread_parts platform")
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("postiz-key", server.URL)
+	_, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"integration_id":"integration-1","platform":"linkedin","thread_parts":["First","Second"],"scheduled_at":"2026-05-08T09:00:00Z","confirmed":true}`))
+	if err == nil {
+		t.Fatal("expected unsupported platform error")
+	}
+	if !strings.Contains(err.Error(), "thread_parts") || !strings.Contains(err.Error(), "x/twitter") {
+		t.Fatalf("err = %v", err)
+	}
+	if called {
+		t.Fatal("Postiz was called")
+	}
+}
+
+func TestPostizCreatePostRejectsBlankExplicitThreadPart(t *testing.T) {
+	tool := NewPostiz("postiz-key", "https://postiz.example")
+	_, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"integration_id":"integration-1","platform":"x","thread_parts":["First","   "],"scheduled_at":"2026-05-08T09:00:00Z","confirmed":true}`))
+	if err == nil {
+		t.Fatal("expected blank thread part error")
+	}
+	if !strings.Contains(err.Error(), "thread_parts[1]") || !strings.Contains(err.Error(), "leer") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

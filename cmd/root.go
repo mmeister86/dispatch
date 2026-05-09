@@ -115,6 +115,8 @@ Du antwortest auf Deutsch, ausser der User schreibt in einer anderen Sprache.
 Du hast Tools fuer GitHub-Kontext, Web-Recherche und Postiz-Planung.
 Nutze GitHub fuer Repo-Aktivitaet, Search fuer aktuelle Themen und Postiz fuer Posts.
 Bevor du einen Post planst, zeige immer eine Vorschau und bitte um Bestaetigung.
+Wenn du einen X/Twitter-Thread planst, zeige jeden Tweet nummeriert in der Vorschau.
+Rufe create_post fuer X/Twitter-Threads mit thread_parts als Array der einzelnen Tweets auf, nicht als mehrere einzelne Posts.
 Rufe create_post nur auf, wenn der User nach der Vorschau eindeutig zugestimmt hat, und setze dann confirmed=true.`
 
 func runSetup(cmd *cobra.Command, path string) error {

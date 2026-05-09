@@ -65,6 +65,17 @@ Configured providers receive tool definitions for:
 
 Use `ctrl+r` for repo activity, `ctrl+p` for Postiz channels, and `ctrl+s` for research from the TUI.
 
+For X/Twitter threads, `create_post` accepts `thread_parts`, where each array item becomes one tweet in the same Postiz thread:
+
+```json
+{
+  "platform": "x",
+  "thread_parts": ["First tweet", "Second tweet", "Final tweet"],
+  "scheduled_at": "2026-05-08T09:00:00Z",
+  "confirmed": true
+}
+```
+
 The committed `config.toml.example` contains placeholders only. Real secrets belong in the user config directory or environment.
 
 ## Wireframes
