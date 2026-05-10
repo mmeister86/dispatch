@@ -4,7 +4,7 @@ title: Improve dispatch setup onboarding
 status: In Progress
 assignee: []
 created_date: '2026-05-10 17:24'
-updated_date: '2026-05-10 17:27'
+updated_date: '2026-05-10 17:42'
 labels: []
 dependencies: []
 priority: high
@@ -41,4 +41,8 @@ Make dispatch --setup a compact wizard with selectable providers/models, visible
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented compact setup wizard with curated provider/model choices, custom model escape hatch, masked secret input with star echo, save confirmation, and non-secret summary. Verification: go test ./cmd ./config ./... passed; git diff --check passed.
+
+Manual test found two setup regressions: raw-mode newlines only wrote LF, causing later prompts to drift right; setup started from defaults instead of loading the existing config, so skipped optional values were overwritten with empty strings. Fixing both under TASK-21 before it can be marked Done.
+
+Fixed manual-test regressions: setup now loads the existing config as the starting point; empty secret prompts preserve existing keys instead of clearing them; masked raw-mode input now writes CRLF so following prompts return to column zero.
 <!-- SECTION:NOTES:END -->

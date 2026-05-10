@@ -120,6 +120,52 @@ func TestRunSetupCanAbortBeforeWritingConfig(t *testing.T) {
 	}
 }
 
+func TestRunSetupKeepsExistingValuesWhenPromptsAreSkipped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	existing := config.Default()
+	existing.LLM.Provider = "openai"
+	existing.LLM.Model = "gpt-5.4-mini"
+	existing.LLM.APIKey = "existing-llm"
+	existing.Postiz.BaseURL = "https://postiz.existing"
+	existing.Postiz.APIKey = "existing-postiz"
+	existing.GitHub.Token = "existing-github"
+	existing.Search.APIKey = "existing-search"
+	if err := config.Write(path, existing); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+
+	input := strings.Join([]string{
+		"", // keep provider
+		"", // keep model
+		"", // keep LLM API key
+		"", // keep Postiz URL
+		"", // keep Postiz key
+		"", // keep GitHub token
+		"", // keep Search key
+		"", // confirm save
+		"",
+	}, "\n")
+
+	out, err := runSetupWithInput(path, input)
+	if err != nil {
+		t.Fatalf("runSetup returned error: %v\nOutput:\n%s", err, out)
+	}
+
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if got.LLM.Provider != existing.LLM.Provider ||
+		got.LLM.Model != existing.LLM.Model ||
+		got.LLM.APIKey != existing.LLM.APIKey ||
+		got.Postiz.BaseURL != existing.Postiz.BaseURL ||
+		got.Postiz.APIKey != existing.Postiz.APIKey ||
+		got.GitHub.Token != existing.GitHub.Token ||
+		got.Search.APIKey != existing.Search.APIKey {
+		t.Fatalf("existing values not preserved:\ngot:  %#v\nwant: %#v", got, existing)
+	}
+}
+
 func TestAskSecretKeepsNonTTYLineFallback(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("  secret-from-pipe  \n"))
 	cmd := &cobra.Command{}
@@ -150,6 +196,9 @@ func TestReadMaskedSecretEchoesStarsForPastedInput(t *testing.T) {
 	}
 	if strings.Count(out.String(), "*") != len("pasted-value") {
 		t.Fatalf("masked output = %q", out.String())
+	}
+	if !strings.HasSuffix(out.String(), "\r\n") {
+		t.Fatalf("masked output should end with CRLF in raw mode: %q", out.String())
 	}
 }
 
