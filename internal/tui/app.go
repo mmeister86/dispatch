@@ -183,7 +183,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addMessageNoPersist(kindSystem, "Chat-Verlauf geleert.")
 			return m, nil
 		case "ctrl+p":
-			return m.startAgent("Liste meine verbundenen Postiz-Kanaele.")
+			return m.startAgent("Liste meine Postiz-Posts der letzten 30 Tage und der naechsten 30 Tage.")
+		case "ctrl+o":
+			return m.startAgent("Liste meine verbundenen Postiz-Kanaele und Provider.")
 		case "ctrl+r":
 			return m.startAgent("Zeige mir GitHub-Aktivitaet aus allen Repos der letzten 7 Tage.")
 		case "ctrl+s":
@@ -455,7 +457,7 @@ func (m *Model) refreshViewport() {
 	if m.showHelp {
 		blocks = append(blocks, m.renderMessage(chatMessage{
 			Kind: kindSystem,
-			Body: "Shortcuts\nctrl+p postiz  ·  ctrl+r repos  ·  ctrl+s suche  ·  ctrl+l leeren  ·  ctrl+c abbrechen  ·  ctrl+q beenden",
+			Body: "Shortcuts\nctrl+p posts  ·  ctrl+o konten  ·  ctrl+r repos  ·  ctrl+s suche  ·  ctrl+l leeren  ·  ctrl+c abbrechen  ·  ctrl+q beenden",
 		}))
 	}
 	if m.streaming && m.activeMsg < 0 {
@@ -484,7 +486,7 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	input := m.textarea.View()
-	shortcuts := m.styles.shortcuts.Render("ctrl+p postiz   ctrl+r repos   ctrl+s suche   ctrl+c abbrechen   ? hilfe")
+	shortcuts := m.styles.shortcuts.Render("ctrl+p posts   ctrl+o konten   ctrl+r repos   ctrl+s suche   ctrl+c abbrechen   ? hilfe")
 	return m.styles.footer.Width(m.width).Render(input + "\n" + shortcuts)
 }
 

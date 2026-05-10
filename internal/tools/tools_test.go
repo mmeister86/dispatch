@@ -5,8 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1012,14 +1015,267 @@ func TestPostizListChannelsAcceptsFullMCPEndpoint(t *testing.T) {
 	}
 }
 
-func TestPostizListPostsReportsUnsupportedMCPTool(t *testing.T) {
+func TestPostizManagementToolDefinitions(t *testing.T) {
 	tool := NewPostiz("postiz-key", "https://postiz.example")
-	_, err := tool.Execute(context.Background(), "list_posts", json.RawMessage(`{"status":"scheduled","limit":3}`))
-	if err == nil {
-		t.Fatal("expected unsupported error")
+	names := map[string]bool{}
+	for _, def := range tool.Definitions() {
+		names[def.Name] = true
 	}
-	if !strings.Contains(err.Error(), "Postiz MCP") || !strings.Contains(err.Error(), "list_posts") {
+	for _, name := range []string{
+		"list_posts",
+		"delete_post",
+		"set_post_status",
+		"upload_media",
+		"get_platform_analytics",
+		"get_post_analytics",
+		"list_missing_post_content",
+		"connect_post_release",
+	} {
+		if !names[name] {
+			t.Fatalf("missing Postiz tool definition %q in %#v", name, names)
+		}
+	}
+}
+
+func TestPostizListPostsUsesPublicAPIWithDefaultDateWindow(t *testing.T) {
+	var gotStart, gotEnd string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s", r.Method)
+		}
+		if r.URL.Path != "/api/public/v1/posts" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if r.Header.Get("authorization") != "postiz-key" {
+			t.Fatalf("authorization = %q", r.Header.Get("authorization"))
+		}
+		gotStart = r.URL.Query().Get("startDate")
+		gotEnd = r.URL.Query().Get("endDate")
+		if customer := r.URL.Query().Get("customer"); customer != "" {
+			t.Fatalf("customer = %q", customer)
+		}
+		_, _ = w.Write([]byte(`[{"id":"post-1","state":"QUEUE"}]`))
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	tool.now = func() time.Time { return time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC) }
+	result, err := tool.Execute(context.Background(), "list_posts", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if gotStart != "2026-04-10T12:00:00Z" || gotEnd != "2026-06-09T12:00:00Z" {
+		t.Fatalf("date window start=%q end=%q", gotStart, gotEnd)
+	}
+	if !strings.Contains(result, "post-1") {
+		t.Fatalf("result = %s", result)
+	}
+}
+
+func TestPostizListPostsPassesOptionalFilters(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/public/v1/posts" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("startDate") != "2026-01-01T00:00:00Z" || q.Get("endDate") != "2026-01-31T23:59:59Z" || q.Get("customer") != "customer-1" {
+			t.Fatalf("query = %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	_, err := tool.Execute(context.Background(), "list_posts", json.RawMessage(`{"start_date":"2026-01-01T00:00:00Z","end_date":"2026-01-31T23:59:59Z","customer":"customer-1"}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+}
+
+func TestPostizDestructiveManagementToolsRequireConfirmation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("Postiz should not be called without confirmation: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("postiz-key", server.URL)
+	cases := []struct {
+		name string
+		args string
+	}{
+		{"delete_post", `{"post_id":"post-1"}`},
+		{"set_post_status", `{"post_id":"post-1","status":"draft"}`},
+		{"connect_post_release", `{"post_id":"post-1","release_id":"release-1"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tool.Execute(context.Background(), tc.name, json.RawMessage(tc.args))
+			if err == nil {
+				t.Fatal("expected confirmation error")
+			}
+			if !strings.Contains(err.Error(), "confirmed=true") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestPostizDeleteStatusAndConnectUsePublicAPI(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("authorization") != "postiz-key" {
+			t.Fatalf("authorization = %q", r.Header.Get("authorization"))
+		}
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch r.Method + " " + r.URL.Path {
+		case "DELETE /api/public/v1/posts/post-1":
+			_, _ = w.Write([]byte(`{"success":true}`))
+		case "PUT /api/public/v1/posts/post-1/status":
+			var req struct {
+				Status string `json:"status"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode status request: %v", err)
+			}
+			if req.Status != "draft" {
+				t.Fatalf("status = %q", req.Status)
+			}
+			_, _ = w.Write([]byte(`{"success":true}`))
+		case "PUT /api/public/v1/posts/post-1/release-id":
+			var req struct {
+				ReleaseID string `json:"releaseId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode release request: %v", err)
+			}
+			if req.ReleaseID != "release-1" {
+				t.Fatalf("releaseId = %q", req.ReleaseID)
+			}
+			_, _ = w.Write([]byte(`{"success":true}`))
+		default:
+			t.Fatalf("unexpected call: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	for _, tc := range []struct {
+		name string
+		args string
+	}{
+		{"delete_post", `{"post_id":"post-1","confirmed":true}`},
+		{"set_post_status", `{"post_id":"post-1","status":"draft","confirmed":true}`},
+		{"connect_post_release", `{"post_id":"post-1","release_id":"release-1","confirmed":true}`},
+	} {
+		if _, err := tool.Execute(context.Background(), tc.name, json.RawMessage(tc.args)); err != nil {
+			t.Fatalf("%s returned error: %v", tc.name, err)
+		}
+	}
+	if got := strings.Join(calls, ","); got != "DELETE /api/public/v1/posts/post-1,PUT /api/public/v1/posts/post-1/status,PUT /api/public/v1/posts/post-1/release-id" {
+		t.Fatalf("calls = %s", got)
+	}
+}
+
+func TestPostizSetPostStatusRejectsUnsupportedStatus(t *testing.T) {
+	tool := NewPostiz("postiz-key", "https://postiz.example")
+	_, err := tool.Execute(context.Background(), "set_post_status", json.RawMessage(`{"post_id":"post-1","status":"now","confirmed":true}`))
+	if err == nil {
+		t.Fatal("expected status validation error")
+	}
+	if !strings.Contains(err.Error(), "draft") || !strings.Contains(err.Error(), "schedule") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPostizUploadMediaUsesMultipartPublicAPI(t *testing.T) {
+	var uploaded string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s", r.Method)
+		}
+		if r.URL.Path != "/api/public/v1/upload" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if r.Header.Get("authorization") != "postiz-key" {
+			t.Fatalf("authorization = %q", r.Header.Get("authorization"))
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("FormFile: %v", err)
+		}
+		defer file.Close()
+		data, err := io.ReadAll(file)
+		if err != nil {
+			t.Fatalf("read upload: %v", err)
+		}
+		uploaded = header.Filename + ":" + string(data)
+		_, _ = w.Write([]byte(`{"path":"https://postiz.example/uploads/photo.txt"}`))
+	}))
+	defer server.Close()
+
+	file := filepath.Join(t.TempDir(), "photo.txt")
+	if err := os.WriteFile(file, []byte("hello media"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	result, err := tool.Execute(context.Background(), "upload_media", json.RawMessage(fmt.Sprintf(`{"file_path":%q}`, file)))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if uploaded != "photo.txt:hello media" {
+		t.Fatalf("uploaded = %q", uploaded)
+	}
+	if !strings.Contains(result, "photo.txt") {
+		t.Fatalf("result = %s", result)
+	}
+}
+
+func TestPostizAnalyticsAndMissingContentUsePublicAPI(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("authorization") != "postiz-key" {
+			t.Fatalf("authorization = %q", r.Header.Get("authorization"))
+		}
+		calls = append(calls, r.Method+" "+r.URL.String())
+		switch r.URL.Path {
+		case "/api/public/v1/analytics/integration-1":
+			if r.URL.Query().Get("date") != "30" {
+				t.Fatalf("platform analytics query = %s", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`[{"metric":"Followers"}]`))
+		case "/api/public/v1/analytics/post/post-1":
+			if r.URL.Query().Get("date") != "7" {
+				t.Fatalf("post analytics query = %s", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`[{"metric":"Likes"}]`))
+		case "/api/public/v1/posts/post-1/missing":
+			_, _ = w.Write([]byte(`[{"id":"release-1"}]`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	for _, tc := range []struct {
+		name string
+		args string
+		want string
+	}{
+		{"get_platform_analytics", `{"integration_id":"integration-1","days":30}`, "Followers"},
+		{"get_post_analytics", `{"post_id":"post-1"}`, "Likes"},
+		{"list_missing_post_content", `{"post_id":"post-1"}`, "release-1"},
+	} {
+		result, err := tool.Execute(context.Background(), tc.name, json.RawMessage(tc.args))
+		if err != nil {
+			t.Fatalf("%s returned error: %v", tc.name, err)
+		}
+		if !strings.Contains(result, tc.want) {
+			t.Fatalf("%s result = %s", tc.name, result)
+		}
+	}
+	if len(calls) != 3 {
+		t.Fatalf("calls = %#v", calls)
 	}
 }
 

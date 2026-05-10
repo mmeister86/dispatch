@@ -13,7 +13,8 @@ variables and are not committed to the repository.
 - Anthropic, OpenAI, OpenRouter, xAI, and Gemini provider adapters.
 - GitHub tools for recent commits, combined activity, and repository file reads.
 - Perplexity/Sonar search with citations.
-- Postiz MCP scheduling, channel listing, and native X/Twitter thread support.
+- Postiz MCP scheduling, channel listing, native X/Twitter thread support, and
+  native Public API post management for self-hosted instances.
 - Local build, install, test, and version targets through `make`.
 
 ## Quickstart
@@ -113,13 +114,16 @@ Configured providers receive these tool definitions:
 
 - GitHub: `get_recent_commits`, `get_activity`, `get_file`
 - Search: `search` via Perplexity/Sonar
-- Postiz: `list_channels`, `create_post`
+- Postiz: `list_channels`, `create_post`, `list_posts`, `delete_post`,
+  `set_post_status`, `upload_media`, `get_platform_analytics`,
+  `get_post_analytics`, `list_missing_post_content`, `connect_post_release`
 
 The TUI includes shortcuts for common tool prompts:
 
 | Shortcut | Action |
 | --- | --- |
-| `ctrl+p` | list connected Postiz channels |
+| `ctrl+p` | list Postiz posts from the last 30 days through the next 30 days |
+| `ctrl+o` | list connected Postiz accounts/providers |
 | `ctrl+r` | summarize GitHub activity from the last 7 days |
 | `ctrl+s` | research current developer social topics with citations |
 | `ctrl+l` | clear the current chat/session |
@@ -176,6 +180,10 @@ the same Postiz thread:
 Postiz defaults to `https://api.postiz.com`. For self-hosted instances, set
 `postiz.base_url` or `POSTIZ_BASE_URL`. Direct MCP URLs containing `/mcp/` are
 also supported.
+
+`list_posts`, `delete_post`, `set_post_status`, `upload_media`, analytics, and
+missing-release helpers use the Postiz Public API directly. Destructive actions
+require an explicit confirmation before the agent can call them.
 
 ## Development
 
