@@ -59,7 +59,6 @@ type Model struct {
 	height    int
 	ready     bool
 	streaming bool
-	lastInput string
 	showHelp  bool
 	stream    <-chan provider.Chunk
 	activeMsg int
@@ -190,17 +189,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.startAgent("Zeige mir GitHub-Aktivitaet aus allen Repos der letzten 7 Tage.")
 		case "ctrl+s":
 			return m.startAgent("Welche Themen sind aktuell relevant fuer Developer Social Posts? Recherchiere mit Quellen.")
-		case "up":
-			if m.textarea.Value() == "" && m.lastInput != "" {
-				m.textarea.SetValue(m.lastInput)
-				return m, nil
-			}
 		case "enter":
 			value := strings.TrimSpace(m.textarea.Value())
 			if value == "" {
 				return m, nil
 			}
-			m.lastInput = value
 			m.textarea.Reset()
 			if isSessionCommand(value) {
 				return m.handleSessionCommand(value)

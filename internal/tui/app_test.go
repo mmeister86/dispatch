@@ -360,6 +360,25 @@ func TestCtrlLClearsTranscriptAgentHistoryAndPersistedSession(t *testing.T) {
 	}
 }
 
+func TestPlainUpDoesNotRestoreSubmittedInput(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.layout()
+	m.textarea.SetValue("Welche Themen sind aktuell relevant?")
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if got := m.textarea.Value(); got != "" {
+		t.Fatalf("textarea after submit = %q, want empty", got)
+	}
+
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = model.(Model)
+
+	if got := m.textarea.Value(); got != "" {
+		t.Fatalf("plain up should leave answered input cleared, got %q", got)
+	}
+}
+
 func TestAgentChunkPersistsVisibleAssistantText(t *testing.T) {
 	store := &memorySessionStore{}
 	m := NewWithSessionStore(config.Config{}, nil, nil, store)

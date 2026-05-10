@@ -130,7 +130,6 @@ The TUI includes shortcuts for common tool prompts:
 | `ctrl+c` | cancel a running agent call, or quit when idle |
 | `ctrl+q` | quit |
 | `?` | toggle help |
-| `up` | reuse the last input when the prompt is empty |
 
 ## Sessions
 
