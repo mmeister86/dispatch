@@ -175,7 +175,10 @@ var modelChoicesByProvider = map[string][]setupChoice{
 
 func runSetup(cmd *cobra.Command, path string) error {
 	reader := bufio.NewReader(cmd.InOrStdin())
-	cfg := config.Default()
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 
 	fmt.Fprintln(out, "dispatch Einrichtung")
@@ -205,7 +208,9 @@ func runSetup(cmd *cobra.Command, path string) error {
 	if err != nil {
 		return err
 	}
-	cfg.LLM.APIKey = apiKey
+	if apiKey != "" {
+		cfg.LLM.APIKey = apiKey
+	}
 
 	postizURL, err := ask(reader, cmd.OutOrStdout(), "Postiz MCP Base URL", cfg.Postiz.BaseURL)
 	if err != nil {
@@ -217,19 +222,25 @@ func runSetup(cmd *cobra.Command, path string) error {
 	if err != nil {
 		return err
 	}
-	cfg.Postiz.APIKey = postizKey
+	if postizKey != "" {
+		cfg.Postiz.APIKey = postizKey
+	}
 
 	githubToken, err := askSecret(reader, cmd, "GitHub Token (optional)")
 	if err != nil {
 		return err
 	}
-	cfg.GitHub.Token = githubToken
+	if githubToken != "" {
+		cfg.GitHub.Token = githubToken
+	}
 
 	searchKey, err := askSecret(reader, cmd, "Perplexity/Search API Key (optional)")
 	if err != nil {
 		return err
 	}
-	cfg.Search.APIKey = searchKey
+	if searchKey != "" {
+		cfg.Search.APIKey = searchKey
+	}
 
 	printSetupSummary(out, cfg, config.DisplayPath(path))
 	save, err := askConfirm(reader, out, "Konfiguration speichern?", true)
@@ -388,10 +399,10 @@ func readMaskedSecret(reader *bufio.Reader, out io.Writer) (string, error) {
 
 		switch b {
 		case '\r', '\n':
-			fmt.Fprintln(out)
+			fmt.Fprint(out, "\r\n")
 			return string(value), nil
 		case 3:
-			fmt.Fprintln(out)
+			fmt.Fprint(out, "\r\n")
 			return "", errors.New("Eingabe abgebrochen")
 		case '\b', 0x7f:
 			if len(value) > 0 {
