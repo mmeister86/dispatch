@@ -1,10 +1,10 @@
 ---
 id: TASK-13
 title: Add session overview command
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-08 21:26'
-updated_date: '2026-05-08 21:31'
+updated_date: '2026-05-10 10:55'
 labels: []
 dependencies: []
 priority: high
@@ -40,3 +40,9 @@ Add a local /session command that lists persisted dispatch sessions and lets the
 <!-- SECTION:NOTES:BEGIN -->
 Implemented multi-session store metadata and local /session slash commands for list, new, open, and delete. RED tests failed on missing Session metadata, Store methods, and TUI command wiring before implementation. Verification so far: go test ./... passed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped local /session commands for listing, creating, opening, and deleting persisted sessions without sending those commands to the LLM, with session metadata and compatibility coverage. User confirmed task can be closed.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -1,10 +1,10 @@
 ---
 id: TASK-11
 title: Add MCP protocol version negotiation
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-08 21:20'
-updated_date: '2026-05-08 21:23'
+updated_date: '2026-05-10 10:54'
 labels: []
 dependencies: []
 priority: high
@@ -44,3 +44,9 @@ Implemented and verified MCP protocol fallback: initialize tries known versions 
 
 Implemented expired-session recovery: a tool call that receives HTTP 404, or a 400 body containing "No valid session ID", clears cached MCP session state, reinitializes, and retries the same tool call once. Verification: go test ./internal/tools and go test ./... passed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped MCP protocol version negotiation for Postiz, including fallback initialize attempts, negotiated protocol reuse, expired-session reinitialization, and regression tests. User confirmed task can be closed.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -1,10 +1,10 @@
 ---
 id: TASK-15
 title: Update repository documentation
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 05:35'
-updated_date: '2026-05-09 05:37'
+updated_date: '2026-05-10 10:55'
 labels: []
 dependencies: []
 priority: high
@@ -38,3 +38,9 @@ Refresh the README and related repository documentation so it matches the curren
 Refreshed README, CONTRIBUTING, PLAN, CHANGELOG, and config.toml.example against the current CLI/TUI implementation.
 Verification: go test ./... passed; git diff --check passed; stale-doc search found no matches for removed Phase 1/list_posts/old config wording.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped refreshed repository documentation covering README, CONTRIBUTING, PLAN, CHANGELOG, and config example alignment with the current CLI/TUI behavior. User confirmed task can be closed.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -1,10 +1,10 @@
 ---
 id: TASK-8
 title: Add auto-resume sessions
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-08 19:28'
-updated_date: '2026-05-08 19:33'
+updated_date: '2026-05-10 10:54'
 labels: []
 dependencies: []
 priority: high
@@ -42,3 +42,9 @@ Created implementation branch codex-auto-resume-sessions. Baseline go test ./...
 
 Implemented internal/session store, TUI auto-load/persist wiring, Agent SetHistory/ClearHistory, and CLI startup store wiring. Verified RED failures for missing session/agent/TUI APIs before implementation. Verification: go test ./... passed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped auto-resume session persistence with transcript and agent history restoration, ctrl+l clearing, private atomic session storage, and test coverage. User confirmed task can be closed.
+<!-- SECTION:FINAL_SUMMARY:END -->

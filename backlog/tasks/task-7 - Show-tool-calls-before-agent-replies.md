@@ -1,10 +1,10 @@
 ---
 id: TASK-7
 title: Show tool calls before agent replies
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-07 19:14'
-updated_date: '2026-05-08 20:53'
+updated_date: '2026-05-10 10:54'
 labels: []
 dependencies: []
 priority: high
@@ -42,3 +42,9 @@ Implemented delayed agent message creation and compact tool formatting. Verified
 
 Follow-up fix after manual screenshot: when a tool call arrives after preliminary assistant text, remove that provisional agent message and reset activeMsg so the post-tool answer starts after the tool blocks. Added regression coverage for text → tool call → tool result → answer text. Verified with go test ./... .
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped TUI transcript ordering so tool calls/results render before the associated final agent answer, with compact readable tool formatting and regression coverage. User confirmed task can be closed.
+<!-- SECTION:FINAL_SUMMARY:END -->

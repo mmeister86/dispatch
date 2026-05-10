@@ -1,10 +1,10 @@
 ---
 id: TASK-10
 title: Improve Dispatch TUI readability and hierarchy
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-08 21:03'
-updated_date: '2026-05-08 21:30'
+updated_date: '2026-05-10 10:54'
 labels: []
 dependencies: []
 priority: high
@@ -52,3 +52,9 @@ Follow-up root cause 3: nearby dark background colors quantized differently in m
 
 Follow-up root cause 4: forcing full-width/background colors created visible panes in terminals whose default background differs from rendered ANSI backgrounds. Switched content, canvas, message, and textarea styles back to foreground-only rendering so the terminal background remains uniform while borders/text carry hierarchy.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped TUI readability and hierarchy improvements for message contrast, compact tool blocks, wrapping, Markdown cleanup, and terminal background behavior, with focused rendering tests. User confirmed task can be closed.
+<!-- SECTION:FINAL_SUMMARY:END -->

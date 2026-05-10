@@ -1,10 +1,10 @@
 ---
 id: TASK-16
 title: Add native Postiz management tools
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-10 09:01'
-updated_date: '2026-05-10 09:13'
+updated_date: '2026-05-10 10:54'
 labels: []
 dependencies: []
 priority: high
@@ -47,3 +47,9 @@ Adjusted shortcut behavior per user request: ctrl+p now lists Postiz posts for t
 
 Adjusted shortcut split per user request: ctrl+p lists Postiz posts, while ctrl+o lists connected Postiz accounts/providers via the existing channel listing prompt. Updated TUI help/footer and README. Verification: go test ./internal/tui ./internal/tools -count=1 passed; git diff --check passed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped native Postiz Public API management tools for listing and managing posts, upload, analytics, and missing-release repair; added self-hosted endpoint derivation, destructive confirmation gates, ctrl+p posts and ctrl+o connected accounts shortcuts, README/system prompt updates, and regression coverage. Merged into main and pushed to origin/main after go test ./... passed.
+<!-- SECTION:FINAL_SUMMARY:END -->

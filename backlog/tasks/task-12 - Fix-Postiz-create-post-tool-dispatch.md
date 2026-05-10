@@ -1,11 +1,11 @@
 ---
 id: TASK-12
 title: Fix Postiz create post tool dispatch
-status: In Progress
+status: Done
 assignee:
   - Codex
 created_date: '2026-05-08 21:25'
-updated_date: '2026-05-08 22:02'
+updated_date: '2026-05-10 10:54'
 labels: []
 dependencies: []
 references:
@@ -75,3 +75,9 @@ Fifth runtime issue: Postiz calendar showed a created X post at 02:00 on 2026-05
 
 Context7 confirms Postiz MCP accepts `type: draft | schedule | now`, and Postiz SDK/Public API docs also list `now` for immediate publishing. Added regression coverage for both MCP and Public API fallback paths: past `scheduled_at` values now produce `type: now` with the current UTC timestamp, while future values remain `type: schedule`. Verification: `go test ./internal/tools` and full `go test ./...` pass.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped robust Postiz create_post dispatch with MCP schedule fallback to Public API, MCP isError handling, self-hosted /api endpoint preservation, X settings/media validation, automatic X thread splitting, and immediate publish for past scheduled_at values. User confirmed task can be closed.
+<!-- SECTION:FINAL_SUMMARY:END -->
