@@ -27,6 +27,20 @@ go test ./...
 CI runs the same test suite plus `make build`. Release archive settings live in
 `.goreleaser.yml`.
 
+## Release Process
+
+Releases are tag-driven. Create an annotated semver-style tag, push it, and let
+the GitHub Actions release workflow publish the GitHub Release:
+
+```bash
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+The workflow runs GoReleaser with `release --clean`. It builds Linux, macOS, and
+Windows archives for amd64 and arm64, embeds version metadata through `ldflags`,
+and uploads `checksums.txt` with the release artifacts.
+
 ## Task Tracking
 
 This repository uses Backlog.md for non-trivial work. Create and update tasks

@@ -205,5 +205,20 @@ CI runs `go test ./...` and `make build` on push and pull requests. Release
 archives are configured through GoReleaser for Linux, macOS, and Windows on
 amd64 and arm64.
 
+## Releases
+
+Versioned releases are created from Git tags named `v*`, for example `v0.1.0`.
+Pushing such a tag starts the release workflow, which runs GoReleaser and
+attaches Linux, macOS, and Windows archives plus `checksums.txt` to a GitHub
+Release.
+
+```bash
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+GoReleaser injects the tag version, commit SHA, and build date into
+`dispatch version`.
+
 The original TUI wireframe reference lives at
 [docs/wireframes.html](docs/wireframes.html).

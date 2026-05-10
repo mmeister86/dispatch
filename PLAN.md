@@ -175,12 +175,12 @@ Wichtige Interaktionen:
 | Search Tool | Erledigt | Perplexity/Sonar mit Citations |
 | Postiz Tool | Erledigt | MCP, Protocol Negotiation, Public-API-Fallback, X-Threads |
 | Sessions | Erledigt | Auto-Resume, Session-Liste, Open/New/Delete |
-| Release-Vorbereitung | Teilweise | CI und GoReleaser-Konfig vorhanden; Release-Prozess noch praktisch validieren |
+| Release-Vorbereitung | Teilweise | CI, GoReleaser-Konfig und Tag-Workflow vorhanden; erster echter Release noch validieren |
 
 ## Naechste sinnvolle Schritte
 
 - GitHub `get_activity` um echte PR- und Issue-Aggregation erweitern.
 - `dispatch check` optional detaillierter machen, z.B. Search separat warnen.
-- Ersten GoReleaser-Dry-Run dokumentieren und Release-Artefakte validieren.
+- Ersten echten GoReleaser-Tag-Release ausfuehren und Release-Artefakte validieren.
 - README mit Screenshots oder einer kurzen TUI-Aufnahme erweitern, sobald das UI
   stabil ist.

@@ -2,10 +2,21 @@ version: 2
 
 project_name: dispatch
 
+before:
+  hooks:
+    - go mod tidy
+
 builds:
   - id: dispatch
     main: .
     binary: dispatch
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w -X github.com/matthias/dispatch/cmd.version={{ .Version }} -X github.com/matthias/dispatch/cmd.commit={{ .Commit }} -X github.com/matthias/dispatch/cmd.date={{ .Date }}
     goos:
       - linux
       - darwin
@@ -13,11 +24,32 @@ builds:
     goarch:
       - amd64
       - arm64
-    ldflags:
-      - -s -w -X github.com/matthias/dispatch/cmd.version={{.Version}} -X github.com/matthias/dispatch/cmd.commit={{.Commit}} -X github.com/matthias/dispatch/cmd.date={{.Date}}
 
 archives:
-  - formats: [tar.gz]
+  - id: dispatch
+    ids:
+      - dispatch
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        formats: [zip]
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  draft: false
+  prerelease: auto
