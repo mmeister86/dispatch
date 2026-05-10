@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +60,39 @@ func (p *Postiz) Definitions() []provider.ToolDefinition {
 			"confirmed":      boolProp("Muss true sein, nachdem der User die Vorschau explizit bestaetigt hat"),
 		}, "scheduled_at", "confirmed")},
 		{Name: "list_channels", Description: "Listet verbundene Postiz-Social-Channels.", Schema: objectSchema(map[string]any{})},
+		{Name: "list_posts", Description: "Listet bestehende Postiz-Posts via Public API. Standard: letzte 30 Tage bis naechste 30 Tage.", Schema: objectSchema(map[string]any{
+			"start_date": stringProp("Optionaler Startzeitpunkt als ISO-8601; Standard ist jetzt minus 30 Tage"),
+			"end_date":   stringProp("Optionaler Endzeitpunkt als ISO-8601; Standard ist jetzt plus 30 Tage"),
+			"customer":   stringProp("Optionaler Postiz Customer-ID Filter"),
+		})},
+		{Name: "delete_post", Description: "Loescht einen Postiz-Post via Public API. Nur nach expliziter User-Bestaetigung nutzen.", Schema: objectSchema(map[string]any{
+			"post_id":   stringProp("Postiz Post-ID"),
+			"confirmed": boolProp("Muss true sein, nachdem der User das Loeschen explizit bestaetigt hat"),
+		}, "post_id", "confirmed")},
+		{Name: "set_post_status", Description: "Setzt einen Postiz-Post auf draft oder schedule. Nur nach expliziter User-Bestaetigung nutzen.", Schema: objectSchema(map[string]any{
+			"post_id":   stringProp("Postiz Post-ID"),
+			"status":    stringProp("Neuer Status: draft oder schedule"),
+			"confirmed": boolProp("Muss true sein, nachdem der User die Statusaenderung explizit bestaetigt hat"),
+		}, "post_id", "status", "confirmed")},
+		{Name: "upload_media", Description: "Laedt eine lokale Datei zu Postiz hoch und gibt die Upload-Antwort zurueck.", Schema: objectSchema(map[string]any{
+			"file_path": stringProp("Lokaler Pfad zur hochzuladenden Datei"),
+		}, "file_path")},
+		{Name: "get_platform_analytics", Description: "Ruft Postiz Analytics fuer eine Integration bzw. Plattform ab.", Schema: objectSchema(map[string]any{
+			"integration_id": stringProp("Postiz Integration-ID"),
+			"days":           intProp("Optionaler Rueckblick in Tagen; Standard 7"),
+		}, "integration_id")},
+		{Name: "get_post_analytics", Description: "Ruft Postiz Analytics fuer einen bestimmten Post ab.", Schema: objectSchema(map[string]any{
+			"post_id": stringProp("Postiz Post-ID"),
+			"days":    intProp("Optionaler Rueckblick in Tagen; Standard 7"),
+		}, "post_id")},
+		{Name: "list_missing_post_content", Description: "Listet verfuegbare Provider-Inhalte fuer einen Post mit fehlender Release-ID.", Schema: objectSchema(map[string]any{
+			"post_id": stringProp("Postiz Post-ID"),
+		}, "post_id")},
+		{Name: "connect_post_release", Description: "Verbindet einen Postiz-Post mit einer Provider Release-ID. Nur nach expliziter User-Bestaetigung nutzen.", Schema: objectSchema(map[string]any{
+			"post_id":    stringProp("Postiz Post-ID"),
+			"release_id": stringProp("Provider-spezifische Release-/Content-ID"),
+			"confirmed":  boolProp("Muss true sein, nachdem der User die Verbindung explizit bestaetigt hat"),
+		}, "post_id", "release_id", "confirmed")},
 	}
 }
 
@@ -111,7 +147,75 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 		}
 		return result, err
 	case "list_posts":
-		return "", fmt.Errorf("Postiz MCP bietet laut Dokumentation kein list_posts Tool an")
+		var req struct {
+			StartDate string `json:"start_date"`
+			EndDate   string `json:"end_date"`
+			Customer  string `json:"customer"`
+		}
+		_ = json.Unmarshal(args, &req)
+		return p.listPostsPublic(ctx, req.StartDate, req.EndDate, req.Customer)
+	case "delete_post":
+		var req struct {
+			PostID    string `json:"post_id"`
+			Confirmed bool   `json:"confirmed"`
+		}
+		_ = json.Unmarshal(args, &req)
+		if !req.Confirmed {
+			return "", fmt.Errorf("Postiz delete_post erfordert confirmed=true nach expliziter User-Bestaetigung")
+		}
+		return p.deletePostPublic(ctx, req.PostID)
+	case "set_post_status":
+		var req struct {
+			PostID    string `json:"post_id"`
+			Status    string `json:"status"`
+			Confirmed bool   `json:"confirmed"`
+		}
+		_ = json.Unmarshal(args, &req)
+		if !req.Confirmed {
+			return "", fmt.Errorf("Postiz set_post_status erfordert confirmed=true nach expliziter User-Bestaetigung")
+		}
+		return p.setPostStatusPublic(ctx, req.PostID, req.Status)
+	case "upload_media":
+		var req struct {
+			FilePath string `json:"file_path"`
+		}
+		_ = json.Unmarshal(args, &req)
+		return p.uploadMediaPublic(ctx, req.FilePath)
+	case "get_platform_analytics":
+		var req struct {
+			IntegrationID string `json:"integration_id"`
+			Days          int    `json:"days"`
+		}
+		_ = json.Unmarshal(args, &req)
+		return p.analyticsPublic(ctx, "analytics/"+url.PathEscape(strings.TrimSpace(req.IntegrationID)), req.Days)
+	case "get_post_analytics":
+		var req struct {
+			PostID string `json:"post_id"`
+			Days   int    `json:"days"`
+		}
+		_ = json.Unmarshal(args, &req)
+		return p.analyticsPublic(ctx, "analytics/post/"+url.PathEscape(strings.TrimSpace(req.PostID)), req.Days)
+	case "list_missing_post_content":
+		var req struct {
+			PostID string `json:"post_id"`
+		}
+		_ = json.Unmarshal(args, &req)
+		postID := strings.TrimSpace(req.PostID)
+		if postID == "" {
+			return "", fmt.Errorf("Postiz list_missing_post_content braucht post_id")
+		}
+		return p.publicAPIRequest(ctx, http.MethodGet, "posts/"+url.PathEscape(postID)+"/missing", nil, nil)
+	case "connect_post_release":
+		var req struct {
+			PostID    string `json:"post_id"`
+			ReleaseID string `json:"release_id"`
+			Confirmed bool   `json:"confirmed"`
+		}
+		_ = json.Unmarshal(args, &req)
+		if !req.Confirmed {
+			return "", fmt.Errorf("Postiz connect_post_release erfordert confirmed=true nach expliziter User-Bestaetigung")
+		}
+		return p.connectPostReleasePublic(ctx, req.PostID, req.ReleaseID)
 	case "list_channels":
 		return p.callMCPTool(ctx, "integrationList", map[string]any{})
 	default:
@@ -315,6 +419,10 @@ func (p *Postiz) mcpEndpoint() (string, error) {
 }
 
 func (p *Postiz) publicAPIEndpoint() (string, error) {
+	return p.publicAPIEndpointFor("posts")
+}
+
+func (p *Postiz) publicAPIEndpointFor(endpoint string) (string, error) {
 	if strings.TrimSpace(p.baseURL) == "" {
 		return "", fmt.Errorf("Postiz Base URL fehlt")
 	}
@@ -335,7 +443,8 @@ func (p *Postiz) publicAPIEndpoint() (string, error) {
 			break
 		}
 	}
-	u.Path = path + "/public/v1/posts"
+	endpoint = strings.TrimLeft(endpoint, "/")
+	u.Path = path + "/public/v1/" + endpoint
 	u.RawQuery = ""
 	return u.String(), nil
 }
@@ -394,6 +503,164 @@ func (p *Postiz) createPostPublic(ctx context.Context, integrationID, platform, 
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("authorization", apiKey)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	bodyText := strings.TrimSpace(string(respBody))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("Postiz Public API returned %s: %s", resp.Status, bodyText)
+	}
+	return bodyText, nil
+}
+
+func (p *Postiz) listPostsPublic(ctx context.Context, startDate, endDate, customer string) (string, error) {
+	now := p.currentTime()
+	startDate = strings.TrimSpace(startDate)
+	if startDate == "" {
+		startDate = now.AddDate(0, 0, -30).Format(time.RFC3339)
+	}
+	endDate = strings.TrimSpace(endDate)
+	if endDate == "" {
+		endDate = now.AddDate(0, 0, 30).Format(time.RFC3339)
+	}
+	query := url.Values{}
+	query.Set("startDate", startDate)
+	query.Set("endDate", endDate)
+	if customer = strings.TrimSpace(customer); customer != "" {
+		query.Set("customer", customer)
+	}
+	return p.publicAPIRequest(ctx, http.MethodGet, "posts", nil, query)
+}
+
+func (p *Postiz) deletePostPublic(ctx context.Context, postID string) (string, error) {
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return "", fmt.Errorf("Postiz delete_post braucht post_id")
+	}
+	return p.publicAPIRequest(ctx, http.MethodDelete, "posts/"+url.PathEscape(postID), nil, nil)
+}
+
+func (p *Postiz) setPostStatusPublic(ctx context.Context, postID, status string) (string, error) {
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return "", fmt.Errorf("Postiz set_post_status braucht post_id")
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status != "draft" && status != "schedule" {
+		return "", fmt.Errorf("Postiz set_post_status status muss draft oder schedule sein")
+	}
+	return p.publicAPIRequest(ctx, http.MethodPut, "posts/"+url.PathEscape(postID)+"/status", map[string]any{"status": status}, nil)
+}
+
+func (p *Postiz) connectPostReleasePublic(ctx context.Context, postID, releaseID string) (string, error) {
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return "", fmt.Errorf("Postiz connect_post_release braucht post_id")
+	}
+	releaseID = strings.TrimSpace(releaseID)
+	if releaseID == "" {
+		return "", fmt.Errorf("Postiz connect_post_release braucht release_id")
+	}
+	return p.publicAPIRequest(ctx, http.MethodPut, "posts/"+url.PathEscape(postID)+"/release-id", map[string]any{"releaseId": releaseID}, nil)
+}
+
+func (p *Postiz) analyticsPublic(ctx context.Context, endpoint string, days int) (string, error) {
+	endpoint = strings.Trim(endpoint, "/")
+	if endpoint == "analytics" || endpoint == "analytics/post" {
+		return "", fmt.Errorf("Postiz analytics braucht eine ID")
+	}
+	if days <= 0 {
+		days = 7
+	}
+	query := url.Values{}
+	query.Set("date", fmt.Sprintf("%d", days))
+	return p.publicAPIRequest(ctx, http.MethodGet, endpoint, nil, query)
+}
+
+func (p *Postiz) publicAPIRequest(ctx context.Context, method, endpoint string, payload any, query url.Values) (string, error) {
+	endpointURL, err := p.publicAPIEndpointFor(endpoint)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(endpointURL)
+	if err != nil {
+		return "", err
+	}
+	if len(query) > 0 {
+		u.RawQuery = query.Encode()
+	}
+	apiKey, err := p.postizAPIKey()
+	if err != nil {
+		return "", err
+	}
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return "", err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("authorization", apiKey)
+	if payload != nil {
+		req.Header.Set("content-type", "application/json")
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	bodyText := strings.TrimSpace(string(respBody))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("Postiz Public API returned %s: %s", resp.Status, bodyText)
+	}
+	return bodyText, nil
+}
+
+func (p *Postiz) uploadMediaPublic(ctx context.Context, filePath string) (string, error) {
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		return "", fmt.Errorf("Postiz upload_media braucht file_path")
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	endpoint, err := p.publicAPIEndpointFor("upload")
+	if err != nil {
+		return "", err
+	}
+	apiKey, err := p.postizAPIKey()
+	if err != nil {
+		return "", err
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return "", err
+	}
+	if err := writer.Close(); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("authorization", apiKey)
+	req.Header.Set("content-type", writer.FormDataContentType())
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return "", err
