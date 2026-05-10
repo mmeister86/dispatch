@@ -77,6 +77,8 @@ func (o *OpenAICompatible) Complete(ctx context.Context, req Request) (<-chan Ch
 		}
 
 		scanner := bufio.NewScanner(resp.Body)
+		toolCalls := map[int]*ToolCall{}
+		var toolCallIndexes []int
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if !strings.HasPrefix(line, "data:") {
@@ -84,6 +86,24 @@ func (o *OpenAICompatible) Complete(ctx context.Context, req Request) (<-chan Ch
 			}
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "" || data == "[DONE]" {
+				continue
+			}
+
+			var event openAIStreamEvent
+			if err := json.Unmarshal([]byte(data), &event); err != nil {
+				out <- Chunk{Err: err}
+				return
+			}
+			if len(event.Choices) > 0 && len(event.Choices[0].Delta.ToolCalls) > 0 {
+				accumulateOpenAIToolCalls(toolCalls, &toolCallIndexes, event.Choices[0].Delta.ToolCalls)
+				continue
+			}
+			if len(event.Choices) > 0 && event.Choices[0].FinishReason == "tool_calls" {
+				for _, index := range toolCallIndexes {
+					out <- Chunk{ToolCall: toolCalls[index]}
+				}
+				toolCalls = map[int]*ToolCall{}
+				toolCallIndexes = nil
 				continue
 			}
 
@@ -104,12 +124,30 @@ func (o *OpenAICompatible) Complete(ctx context.Context, req Request) (<-chan Ch
 	return out, nil
 }
 
+func accumulateOpenAIToolCalls(toolCalls map[int]*ToolCall, indexes *[]int, deltas []openAIToolCallDelta) {
+	for _, delta := range deltas {
+		call, ok := toolCalls[delta.Index]
+		if !ok {
+			call = &ToolCall{}
+			toolCalls[delta.Index] = call
+			*indexes = append(*indexes, delta.Index)
+		}
+		if delta.ID != "" {
+			call.ID = delta.ID
+		}
+		if delta.Function.Name != "" {
+			call.Name = delta.Function.Name
+		}
+		call.Arguments += delta.Function.Arguments
+	}
+}
+
 type openAIRequest struct {
-	Model     string          `json:"model"`
-	Messages  []openAIMessage `json:"messages"`
-	Tools     []openAITool    `json:"tools,omitempty"`
-	Stream    bool            `json:"stream"`
-	MaxTokens int             `json:"max_tokens,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []openAIMessage `json:"messages"`
+	Tools               []openAITool    `json:"tools,omitempty"`
+	Stream              bool            `json:"stream"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
 }
 
 type openAIMessage struct {
@@ -152,30 +190,32 @@ func newOpenAIRequest(model string, req Request) openAIRequest {
 	}
 
 	return openAIRequest{
-		Model:     model,
-		Messages:  messages,
-		Tools:     tools,
-		Stream:    true,
-		MaxTokens: req.MaxTokens,
+		Model:               model,
+		Messages:            messages,
+		Tools:               tools,
+		Stream:              true,
+		MaxCompletionTokens: req.MaxTokens,
 	}
 }
 
 type openAIStreamEvent struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
-				Index    int    `json:"index"`
-				ID       string `json:"id"`
-				Type     string `json:"type"`
-				Function struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-			} `json:"tool_calls"`
+			Content   string                `json:"content"`
+			ToolCalls []openAIToolCallDelta `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+}
+
+type openAIToolCallDelta struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 func parseOpenAIData(data []byte) (Chunk, bool, error) {

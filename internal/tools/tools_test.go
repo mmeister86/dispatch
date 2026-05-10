@@ -275,6 +275,20 @@ func TestPostizCreatePostSchemaSupportsThreadParts(t *testing.T) {
 	}
 }
 
+func TestObjectSchemaWithoutRequiredFieldsUsesEmptyArray(t *testing.T) {
+	schema := objectSchema(map[string]any{})
+	payload, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	if strings.Contains(string(payload), `"required":null`) {
+		t.Fatalf("schema required field serialized as null: %s", payload)
+	}
+	if !strings.Contains(string(payload), `"required":[]`) {
+		t.Fatalf("schema required field did not serialize as empty array: %s", payload)
+	}
+}
+
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

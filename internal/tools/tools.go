@@ -50,6 +50,9 @@ func (r *Registry) Execute(ctx context.Context, name string, args string) (strin
 }
 
 func objectSchema(properties map[string]any, required ...string) map[string]any {
+	if required == nil {
+		required = []string{}
+	}
 	return map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
