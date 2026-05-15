@@ -126,6 +126,8 @@ The TUI includes shortcuts for common tool prompts:
 | `ctrl+o` | list connected Postiz accounts/providers |
 | `ctrl+r` | summarize GitHub activity from the last 7 days |
 | `ctrl+s` | research current developer social topics with citations |
+| `ctrl+v` | attach image files or a clipboard image to the current prompt |
+| `ctrl+x` | clear pending image attachments |
 | `ctrl+l` | clear the current chat/session |
 | `ctrl+c` | cancel a running agent call, or quit when idle |
 | `ctrl+q` | quit |
@@ -163,6 +165,18 @@ Session directories are written with `0700` permissions and session files with
 
 `create_post` requires `confirmed=true`; the agent is instructed to show a
 preview before scheduling anything.
+
+Image paste is supported in the TUI with `ctrl+v`. Pasted image files or a
+clipboard bitmap are added as pending attachments and sent with the next user
+message. The agent uploads each local file through `upload_media` and then uses
+the returned media paths in `create_post.media_urls`; the normal preview and
+explicit confirmation gate still applies before a Postiz post is created.
+
+`cmd+v` works when the terminal forwards it as a normal paste event. For raw
+clipboard images, platform clipboard helpers must be available: macOS uses
+`pngpaste` for bitmap clipboard data and AppleScript for copied files; Linux
+uses `wl-paste`, `xclip`, or `xsel`; Windows uses PowerShell's Clipboard APIs.
+Use `ctrl+x` before sending to clear pending image attachments.
 
 For X/Twitter threads, pass `thread_parts`. Each array item becomes one tweet in
 the same Postiz thread:

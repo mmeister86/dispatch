@@ -3,8 +3,10 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -14,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/matthias/dispatch/config"
 	"github.com/matthias/dispatch/internal/agent"
+	clip "github.com/matthias/dispatch/internal/clipboard"
 	"github.com/matthias/dispatch/internal/provider"
 	"github.com/matthias/dispatch/internal/session"
 )
@@ -45,23 +48,29 @@ type sessionStore interface {
 	Delete(id string) error
 }
 
+type imageReader interface {
+	ReadImages(context.Context) ([]clip.Attachment, error)
+}
+
 type Model struct {
-	cfg       config.Config
-	agent     *agent.Agent
-	sessions  sessionStore
-	session   session.Session
-	styles    styles
-	viewport  viewport.Model
-	textarea  textarea.Model
-	spinner   spinner.Model
-	messages  []chatMessage
-	width     int
-	height    int
-	ready     bool
-	streaming bool
-	showHelp  bool
-	stream    <-chan provider.Chunk
-	activeMsg int
+	cfg         config.Config
+	agent       *agent.Agent
+	sessions    sessionStore
+	session     session.Session
+	styles      styles
+	viewport    viewport.Model
+	textarea    textarea.Model
+	spinner     spinner.Model
+	messages    []chatMessage
+	attachments []clip.Attachment
+	imageReader imageReader
+	width       int
+	height      int
+	ready       bool
+	streaming   bool
+	showHelp    bool
+	stream      <-chan provider.Chunk
+	activeMsg   int
 }
 
 func New(cfg config.Config, chatAgent *agent.Agent, warnings []string) Model {
@@ -87,15 +96,16 @@ func newModel(cfg config.Config, chatAgent *agent.Agent, warnings []string, stor
 	sp.Style = lipgloss.NewStyle().Foreground(palette.green)
 
 	m := Model{
-		cfg:       cfg,
-		agent:     chatAgent,
-		sessions:  store,
-		session:   session.Session{Version: 1},
-		styles:    newStyles(),
-		textarea:  ta,
-		spinner:   sp,
-		activeMsg: -1,
-		messages:  defaultMessages(),
+		cfg:         cfg,
+		agent:       chatAgent,
+		sessions:    store,
+		session:     session.Session{Version: 1},
+		styles:      newStyles(),
+		textarea:    ta,
+		spinner:     sp,
+		imageReader: clip.NewReader(),
+		activeMsg:   -1,
+		messages:    defaultMessages(),
 	}
 	if store != nil {
 		sess, err := store.Load()
@@ -168,7 +178,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = !m.showHelp
 			m.refreshViewport()
 			return m, nil
+		case "ctrl+v":
+			if m.pasteClipboardImages() {
+				return m, nil
+			}
+		case "ctrl+x":
+			if len(m.attachments) > 0 {
+				m.attachments = nil
+				m.addMessageNoPersist(kindSystem, "Bildanhaenge entfernt.")
+				return m, nil
+			}
 		case "ctrl+l":
+			m.attachments = nil
 			m.messages = nil
 			if m.agent != nil {
 				m.agent.ClearHistory()
@@ -191,14 +212,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.startAgent("Welche Themen sind aktuell relevant fuer Developer Social Posts? Recherchiere mit Quellen.")
 		case "enter":
 			value := strings.TrimSpace(m.textarea.Value())
-			if value == "" {
+			attachments := append([]clip.Attachment(nil), m.attachments...)
+			if value == "" && len(attachments) == 0 {
 				return m, nil
 			}
 			m.textarea.Reset()
-			if isSessionCommand(value) {
+			m.attachments = nil
+			if len(attachments) == 0 && isSessionCommand(value) {
 				return m.handleSessionCommand(value)
 			}
-			return m.startAgent(value)
+			visibleValue := value
+			if visibleValue == "" {
+				visibleValue = attachmentCountText(len(attachments)) + " angehaengt"
+			}
+			return m.startAgentWithPrompt(visibleValue, agentPromptWithAttachments(value, attachments))
 		}
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -248,13 +275,43 @@ func isSessionCommand(value string) bool {
 	return value == "/session" || strings.HasPrefix(value, "/session ")
 }
 
+func (m *Model) pasteClipboardImages() bool {
+	if m.imageReader == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	attachments, err := m.imageReader.ReadImages(ctx)
+	if err != nil {
+		if errors.Is(err, clip.ErrNoImages) {
+			return false
+		}
+		if errors.Is(err, clip.ErrUnavailable) {
+			m.addMessageNoPersist(kindSystem, fmt.Sprintf("Bild-Paste nicht verfuegbar: %v", err))
+			return true
+		}
+		m.addMessageNoPersist(kindSystem, fmt.Sprintf("Bild-Paste fehlgeschlagen: %v", err))
+		return true
+	}
+	if len(attachments) == 0 {
+		return false
+	}
+	m.attachments = append(m.attachments, attachments...)
+	m.addMessageNoPersist(kindSystem, attachmentCountText(len(attachments))+" angehaengt. Mit Enter mitsenden, mit ctrl+x entfernen.")
+	return true
+}
+
 func (m Model) startAgent(value string) (tea.Model, tea.Cmd) {
-	m.addMessage(kindUser, value)
+	return m.startAgentWithPrompt(value, value)
+}
+
+func (m Model) startAgentWithPrompt(visibleValue, prompt string) (tea.Model, tea.Cmd) {
+	m.addMessage(kindUser, visibleValue)
 	if m.agent == nil {
 		m.addMessage(kindAgent, "LLM-Streaming und Tools sind bereit, sobald ein LLM API Key konfiguriert ist. Starte `dispatch --setup` oder setze LLM_API_KEY.")
 		return m, nil
 	}
-	stream, err := m.agent.Run(context.Background(), value)
+	stream, err := m.agent.Run(context.Background(), prompt)
 	if err != nil {
 		m.addMessage(kindSystem, fmt.Sprintf("Agent-Start fehlgeschlagen: %v", err))
 		return m, nil
@@ -315,6 +372,7 @@ func (m Model) startNewSession() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.session = sess
+	m.attachments = nil
 	m.messages = defaultMessages()
 	if m.agent != nil {
 		m.agent.ClearHistory()
@@ -330,6 +388,7 @@ func (m Model) openSession(id string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.session = sess
+	m.attachments = nil
 	if len(sess.Messages) > 0 {
 		m.messages = chatMessagesFromSession(sess.Messages)
 	} else {
@@ -479,15 +538,23 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	input := m.textarea.View()
-	shortcuts := m.styles.shortcuts.Render("ctrl+p posts   ctrl+o konten   ctrl+r repos   ctrl+s suche   ctrl+c abbrechen   ? hilfe")
-	return m.styles.footer.Width(m.width).Render(input + "\n" + shortcuts)
+	shortcutText := "ctrl+p posts   ctrl+o konten   ctrl+r repos   ctrl+s suche   ctrl+v bild   ctrl+c abbrechen   ? hilfe"
+	if len(m.attachments) > 0 {
+		shortcutText += "   ctrl+x bilder entfernen"
+	}
+	shortcuts := m.styles.shortcuts.Render(shortcutText)
+	attachmentStatus := ""
+	if len(m.attachments) > 0 {
+		attachmentStatus = "\n" + m.styles.accent.Render(attachmentCountText(len(m.attachments))+" angehaengt")
+	}
+	return m.styles.footer.Width(m.width).Render(input + attachmentStatus + "\n" + shortcuts)
 }
 
 func (m Model) renderMessage(msg chatMessage) string {
 	width := m.messageWidth()
 	switch msg.Kind {
 	case kindUser:
-		return m.styles.label.Foreground(lipgloss.Color("#75b7c8")).Render("Du") + "\n" + m.styles.user.Width(width).Render(cleanInlineMarkdown(msg.Body))
+		return m.styles.label.Render("Du") + "\n" + m.styles.user.Width(width).Render(cleanInlineMarkdown(msg.Body))
 	case kindAgent:
 		label := "Antwort"
 		if m.streaming {
@@ -497,16 +564,16 @@ func (m Model) renderMessage(msg chatMessage) string {
 		if body == "" && m.streaming {
 			body = m.spinner.View()
 		}
-		return m.styles.label.Foreground(palette.green).Bold(true).Render(label) + "\n" + m.styles.agent.Width(width).Render(cleanMessageMarkdown(body, width))
+		return m.styles.label.Render(label) + "\n" + m.styles.agent.Width(width).Render(cleanMessageMarkdown(body, width))
 	case kindTool:
 		name, detail := splitToolMessage(msg.Body)
 		label := "Tool"
 		if name != "" {
 			label += " · " + name
 		}
-		return m.styles.label.Foreground(palette.amber).Render(label) + "\n" + m.styles.tool.Width(width).Render(shortenLines(detail, 4, 420))
+		return m.styles.label.Render(label) + "\n" + m.styles.tool.Width(width).Render(shortenLines(detail, 4, 420))
 	default:
-		return m.styles.label.Foreground(palette.purple).Render("System") + "\n" + m.styles.system.Width(width).Render(cleanInlineMarkdown(msg.Body))
+		return m.styles.label.Render("System") + "\n" + m.styles.system.Width(width).Render(cleanInlineMarkdown(msg.Body))
 	}
 }
 
@@ -526,6 +593,45 @@ func waitForAgentChunk(ch <-chan provider.Chunk) tea.Cmd {
 		}
 		return agentChunkMsg(chunk)
 	}
+}
+
+func agentPromptWithAttachments(value string, attachments []clip.Attachment) string {
+	if len(attachments) == 0 {
+		return value
+	}
+	var b strings.Builder
+	value = strings.TrimSpace(value)
+	if value != "" {
+		b.WriteString(value)
+	} else {
+		b.WriteString("Der User hat Bilder ohne zusaetzlichen Text angehaengt.")
+	}
+	b.WriteString("\n\nAngehaengte Bilder fuer Postiz:\n")
+	for i, attachment := range attachments {
+		fmt.Fprintf(&b, "%d. %s", i+1, attachment.Path)
+		if attachment.MIMEType != "" || attachment.OriginalName != "" {
+			b.WriteString(" (")
+			var parts []string
+			if attachment.OriginalName != "" {
+				parts = append(parts, "Name: "+attachment.OriginalName)
+			}
+			if attachment.MIMEType != "" {
+				parts = append(parts, "Typ: "+attachment.MIMEType)
+			}
+			b.WriteString(strings.Join(parts, ", "))
+			b.WriteString(")")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\nLade jedes lokale Bild zuerst mit dem Postiz-Tool upload_media hoch. Verwende die zurueckgegebenen Medien-URLs oder Pfade anschliessend in create_post.media_urls. Erstelle keinen Post ohne Vorschau und explizite Bestaetigung des Users.")
+	return b.String()
+}
+
+func attachmentCountText(count int) string {
+	if count == 1 {
+		return "1 Bild"
+	}
+	return fmt.Sprintf("%d Bilder", count)
 }
 
 func statusDot(ok bool) string {

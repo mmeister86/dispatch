@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/matthias/dispatch/config"
 	"github.com/matthias/dispatch/internal/agent"
+	"github.com/matthias/dispatch/internal/clipboard"
 	"github.com/matthias/dispatch/internal/provider"
 	"github.com/matthias/dispatch/internal/session"
 	"github.com/muesli/termenv"
@@ -500,6 +501,106 @@ func TestSessionDeleteIsLocalCommand(t *testing.T) {
 	}
 }
 
+func TestCtrlVAppendsClipboardImageAttachments(t *testing.T) {
+	reader := &fakeImageReader{attachments: []clipboard.Attachment{
+		{Path: "/tmp/one.png", OriginalName: "one.png", MIMEType: "image/png", Source: "clipboard"},
+		{Path: "/tmp/two.jpg", OriginalName: "two.jpg", MIMEType: "image/jpeg", Source: "file"},
+	}}
+	m := New(config.Config{}, nil, nil)
+	m.imageReader = reader
+	m.width = 96
+	m.height = 24
+	m.layout()
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	m = model.(Model)
+
+	if reader.calls != 1 {
+		t.Fatalf("ReadImages calls = %d, want 1", reader.calls)
+	}
+	if len(m.attachments) != 2 {
+		t.Fatalf("attachments = %#v", m.attachments)
+	}
+	if !strings.Contains(m.renderFooter(), "2 Bilder angehaengt") {
+		t.Fatalf("footer should show attachment count: %q", m.renderFooter())
+	}
+	if !containsMessage(m.messages, "2 Bilder angehaengt") {
+		t.Fatalf("pasting attachments should add a visible confirmation: %#v", m.messages)
+	}
+	if containsMessage(m.messages, "/tmp/one.png") {
+		t.Fatalf("pasting attachments should not write paths to transcript: %#v", m.messages)
+	}
+}
+
+func TestEnterSendsAttachmentInstructionsToAgentAndClearsPendingAttachments(t *testing.T) {
+	chatAgent := agent.New(tuiFakeProvider{}, "", 20)
+	m := New(config.Config{}, chatAgent, nil)
+	m.layout()
+	m.textarea.SetValue("Plane einen Launch-Post.")
+	m.attachments = []clipboard.Attachment{
+		{Path: "/tmp/launch.png", OriginalName: "launch.png", MIMEType: "image/png", Source: "clipboard"},
+	}
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	if len(m.attachments) != 0 {
+		t.Fatalf("attachments should be cleared from pending input after submit: %#v", m.attachments)
+	}
+	if !containsMessage(m.messages, "Plane einen Launch-Post.") {
+		t.Fatalf("visible user text missing: %#v", m.messages)
+	}
+	history := chatAgent.History()
+	if len(history) == 0 {
+		t.Fatal("agent history should contain submitted prompt")
+	}
+	prompt := history[len(history)-1].Content
+	if !strings.Contains(prompt, "Plane einen Launch-Post.") ||
+		!strings.Contains(prompt, "/tmp/launch.png") ||
+		!strings.Contains(prompt, "upload_media") ||
+		!strings.Contains(prompt, "media_urls") {
+		t.Fatalf("agent prompt missing attachment instructions:\n%s", prompt)
+	}
+}
+
+func TestEnterAcceptsImageOnlyPostDraft(t *testing.T) {
+	chatAgent := agent.New(tuiFakeProvider{}, "", 20)
+	m := New(config.Config{}, chatAgent, nil)
+	m.layout()
+	m.attachments = []clipboard.Attachment{
+		{Path: "/tmp/only.png", OriginalName: "only.png", MIMEType: "image/png", Source: "clipboard"},
+	}
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	if !containsMessage(m.messages, "1 Bild angehaengt") {
+		t.Fatalf("image-only submit should still create a visible user turn: %#v", m.messages)
+	}
+	history := chatAgent.History()
+	if len(history) == 0 || !strings.Contains(history[len(history)-1].Content, "/tmp/only.png") {
+		t.Fatalf("image-only submit should include attachment path in agent prompt: %#v", history)
+	}
+}
+
+func TestCtrlXClearsPendingImageAttachments(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.layout()
+	m.attachments = []clipboard.Attachment{
+		{Path: "/tmp/one.png", OriginalName: "one.png", MIMEType: "image/png", Source: "clipboard"},
+	}
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
+	m = model.(Model)
+
+	if len(m.attachments) != 0 {
+		t.Fatalf("attachments should be cleared: %#v", m.attachments)
+	}
+	if !containsMessage(m.messages, "Bildanhaenge entfernt") {
+		t.Fatalf("clear confirmation missing: %#v", m.messages)
+	}
+}
+
 func teaKey(value string) tea.KeyMsg {
 	if value == "ctrl+l" {
 		return tea.KeyMsg{Type: tea.KeyCtrlL}
@@ -552,4 +653,15 @@ func stripANSI(value string) string {
 		b.WriteByte(ch)
 	}
 	return b.String()
+}
+
+type fakeImageReader struct {
+	attachments []clipboard.Attachment
+	err         error
+	calls       int
+}
+
+func (f *fakeImageReader) ReadImages(context.Context) ([]clipboard.Attachment, error) {
+	f.calls++
+	return append([]clipboard.Attachment(nil), f.attachments...), f.err
 }
