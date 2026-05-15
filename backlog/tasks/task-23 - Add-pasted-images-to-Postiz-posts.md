@@ -4,7 +4,7 @@ title: Add pasted images to Postiz posts
 status: In Progress
 assignee: []
 created_date: '2026-05-15 07:15'
-updated_date: '2026-05-15 08:41'
+updated_date: '2026-05-15 11:47'
 labels: []
 dependencies: []
 priority: high
@@ -49,4 +49,8 @@ Final verification after filename polish: GOCACHE=/private/tmp/dispatch-go-build
 Manual test feedback: user saw no confirmation after image paste. Root cause: successful image paste only updated the footer, and macOS bitmap paste without pngpaste was indistinguishable from no image. Added visible system confirmation on successful attach and a visible unavailable message when macOS clipboard contains bitmap data but pngpaste is missing.
 
 Re-verified after paste confirmation fix: GOCACHE=/private/tmp/dispatch-go-build go test -count=1 ./... passed; GOCACHE=/private/tmp/dispatch-go-build make build passed; git diff --check passed.
+
+Manual test feedback: cmd+v did not attach copied image files. Root cause: terminal cmd+v arrives as Bubble Tea bracketed pasted text (KeyRunes with Paste=true), while dispatch only handled KeyCtrlV. Added pasted image path/URI detection before textarea insertion so copied image file paths become attachments and normal pasted text still goes into the textarea.
+
+Re-verified after cmd+v bracketed paste path handling: GOCACHE=/private/tmp/dispatch-go-build go test -count=1 ./... passed; GOCACHE=/private/tmp/dispatch-go-build make build passed; git diff --check passed.
 <!-- SECTION:NOTES:END -->

@@ -116,6 +116,31 @@ func TestLinuxReaderCopiesMultipleImageFilesFromURIList(t *testing.T) {
 	}
 }
 
+func TestAttachPastedImagePathsCopiesImageFilesFromBracketedPasteText(t *testing.T) {
+	sourceDir := t.TempDir()
+	first := filepath.Join(sourceDir, "first image.png")
+	second := filepath.Join(sourceDir, "second.jpg")
+	if err := os.WriteFile(first, tinyPNG, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, append([]byte{0xff, 0xd8, 0xff, 0xdb}, bytes.Repeat([]byte{0}, 16)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := Reader{CacheDir: t.TempDir(), Now: fixedNow}
+	pasted := "file://" + strings.ReplaceAll(first, " ", "%20") + "\n" + strings.ReplaceAll(second, " ", `\ `)
+	attachments, err := reader.AttachPastedImagePaths(context.Background(), pasted)
+	if err != nil {
+		t.Fatalf("AttachPastedImagePaths returned error: %v", err)
+	}
+	if len(attachments) != 2 {
+		t.Fatalf("attachments = %#v", attachments)
+	}
+	if attachments[0].OriginalName != "first image.png" || attachments[1].OriginalName != "second.jpg" {
+		t.Fatalf("attachment names = %#v", attachments)
+	}
+}
+
 func TestWindowsReaderUsesPowerShellClipboardOutput(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "photo.png")
 	if err := os.WriteFile(source, tinyPNG, 0o600); err != nil {

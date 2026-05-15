@@ -41,20 +41,9 @@ func NewReader() Reader {
 }
 
 func (r Reader) ReadImages(ctx context.Context) ([]Attachment, error) {
-	if r.GOOS == "" {
-		r.GOOS = runtime.GOOS
-	}
-	if r.Runner == nil {
-		r.Runner = runCommand
-	}
-	if r.Now == nil {
-		r.Now = func() time.Time { return time.Now().UTC() }
-	}
-	cacheDir, err := r.cacheDir()
-	if err != nil {
+	if err := r.prepare(); err != nil {
 		return nil, err
 	}
-	r.CacheDir = cacheDir
 
 	switch r.GOOS {
 	case "darwin":
@@ -66,6 +55,35 @@ func (r Reader) ReadImages(ctx context.Context) ([]Attachment, error) {
 	default:
 		return nil, fmt.Errorf("%w: Betriebssystem %s wird nicht unterstuetzt", ErrUnavailable, r.GOOS)
 	}
+}
+
+func (r Reader) AttachPastedImagePaths(ctx context.Context, value string) ([]Attachment, error) {
+	if err := r.prepare(); err != nil {
+		return nil, err
+	}
+	attachments := r.attachFiles(ctx, parsePastedPaths(value))
+	if len(attachments) == 0 {
+		return nil, ErrNoImages
+	}
+	return attachments, nil
+}
+
+func (r *Reader) prepare() error {
+	if r.GOOS == "" {
+		r.GOOS = runtime.GOOS
+	}
+	if r.Runner == nil {
+		r.Runner = runCommand
+	}
+	if r.Now == nil {
+		r.Now = func() time.Time { return time.Now().UTC() }
+	}
+	cacheDir, err := r.cacheDir()
+	if err != nil {
+		return err
+	}
+	r.CacheDir = cacheDir
+	return nil
 }
 
 func (r Reader) readDarwin(ctx context.Context) ([]Attachment, error) {
@@ -291,6 +309,74 @@ func parseFileList(value string) []string {
 		paths = append(paths, line)
 	}
 	return paths
+}
+
+func parsePastedPaths(value string) []string {
+	candidates := parseFileList(value)
+	if len(candidates) == 1 && candidates[0] == strings.TrimSpace(value) {
+		candidates = splitShellishFields(value)
+	}
+	seen := make(map[string]bool, len(candidates))
+	var paths []string
+	for _, candidate := range candidates {
+		candidate = normalizePastedPath(candidate)
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		paths = append(paths, candidate)
+	}
+	return paths
+}
+
+func splitShellishFields(value string) []string {
+	var fields []string
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	for _, ch := range strings.TrimSpace(value) {
+		switch {
+		case escaped:
+			b.WriteRune(ch)
+			escaped = false
+		case ch == '\\':
+			escaped = true
+		case quote != 0:
+			if ch == quote {
+				quote = 0
+			} else {
+				b.WriteRune(ch)
+			}
+		case ch == '\'' || ch == '"':
+			quote = ch
+		case ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r':
+			if b.Len() > 0 {
+				fields = append(fields, b.String())
+				b.Reset()
+			}
+		default:
+			b.WriteRune(ch)
+		}
+	}
+	if escaped {
+		b.WriteRune('\\')
+	}
+	if b.Len() > 0 {
+		fields = append(fields, b.String())
+	}
+	return fields
+}
+
+func normalizePastedPath(value string) string {
+	value = strings.TrimSpace(strings.Trim(value, `"'`))
+	if strings.HasPrefix(value, "file://") {
+		u, err := url.Parse(value)
+		if err == nil {
+			value = u.Path
+		}
+	}
+	value = strings.ReplaceAll(value, `\ `, " ")
+	return strings.TrimSpace(value)
 }
 
 func imageMIMEForPath(path string) (string, bool) {

@@ -50,6 +50,7 @@ type sessionStore interface {
 
 type imageReader interface {
 	ReadImages(context.Context) ([]clip.Attachment, error)
+	AttachPastedImagePaths(context.Context, string) ([]clip.Attachment, error)
 }
 
 type Model struct {
@@ -164,6 +165,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.layout()
 	case tea.KeyMsg:
+		if msg.Paste && m.pasteImagePaths(string(msg.Runes)) {
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+q":
 			return m, tea.Quit
@@ -289,6 +293,28 @@ func (m *Model) pasteClipboardImages() bool {
 		if errors.Is(err, clip.ErrUnavailable) {
 			m.addMessageNoPersist(kindSystem, fmt.Sprintf("Bild-Paste nicht verfuegbar: %v", err))
 			return true
+		}
+		m.addMessageNoPersist(kindSystem, fmt.Sprintf("Bild-Paste fehlgeschlagen: %v", err))
+		return true
+	}
+	if len(attachments) == 0 {
+		return false
+	}
+	m.attachments = append(m.attachments, attachments...)
+	m.addMessageNoPersist(kindSystem, attachmentCountText(len(attachments))+" angehaengt. Mit Enter mitsenden, mit ctrl+x entfernen.")
+	return true
+}
+
+func (m *Model) pasteImagePaths(value string) bool {
+	if m.imageReader == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	attachments, err := m.imageReader.AttachPastedImagePaths(ctx, value)
+	if err != nil {
+		if errors.Is(err, clip.ErrNoImages) {
+			return false
 		}
 		m.addMessageNoPersist(kindSystem, fmt.Sprintf("Bild-Paste fehlgeschlagen: %v", err))
 		return true

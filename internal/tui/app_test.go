@@ -532,6 +532,53 @@ func TestCtrlVAppendsClipboardImageAttachments(t *testing.T) {
 	}
 }
 
+func TestBracketedPasteImagePathAppendsAttachmentInsteadOfText(t *testing.T) {
+	reader := &fakeImageReader{pastedAttachments: []clipboard.Attachment{
+		{Path: "/tmp/cached-photo.png", OriginalName: "photo.png", MIMEType: "image/png", Source: "file"},
+	}}
+	m := New(config.Config{}, nil, nil)
+	m.imageReader = reader
+	m.width = 96
+	m.height = 24
+	m.layout()
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/Users/me/photo.png"), Paste: true})
+	m = model.(Model)
+
+	if reader.pasteCalls != 1 || reader.lastPasted != "/Users/me/photo.png" {
+		t.Fatalf("AttachPastedImagePaths calls=%d value=%q", reader.pasteCalls, reader.lastPasted)
+	}
+	if len(m.attachments) != 1 {
+		t.Fatalf("attachments = %#v", m.attachments)
+	}
+	if got := m.textarea.Value(); got != "" {
+		t.Fatalf("pasted image path should not remain in textarea, got %q", got)
+	}
+	if !containsMessage(m.messages, "1 Bild angehaengt") {
+		t.Fatalf("confirmation missing: %#v", m.messages)
+	}
+}
+
+func TestBracketedPastePlainTextStillUpdatesTextarea(t *testing.T) {
+	reader := &fakeImageReader{pasteErr: clipboard.ErrNoImages}
+	m := New(config.Config{}, nil, nil)
+	m.imageReader = reader
+	m.layout()
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("normal pasted text"), Paste: true})
+	m = model.(Model)
+
+	if reader.pasteCalls != 1 {
+		t.Fatalf("AttachPastedImagePaths calls = %d, want 1", reader.pasteCalls)
+	}
+	if got := m.textarea.Value(); got != "normal pasted text" {
+		t.Fatalf("textarea = %q, want pasted text", got)
+	}
+	if len(m.attachments) != 0 {
+		t.Fatalf("attachments = %#v", m.attachments)
+	}
+}
+
 func TestEnterSendsAttachmentInstructionsToAgentAndClearsPendingAttachments(t *testing.T) {
 	chatAgent := agent.New(tuiFakeProvider{}, "", 20)
 	m := New(config.Config{}, chatAgent, nil)
@@ -656,12 +703,22 @@ func stripANSI(value string) string {
 }
 
 type fakeImageReader struct {
-	attachments []clipboard.Attachment
-	err         error
-	calls       int
+	attachments       []clipboard.Attachment
+	err               error
+	calls             int
+	pastedAttachments []clipboard.Attachment
+	pasteErr          error
+	pasteCalls        int
+	lastPasted        string
 }
 
 func (f *fakeImageReader) ReadImages(context.Context) ([]clipboard.Attachment, error) {
 	f.calls++
 	return append([]clipboard.Attachment(nil), f.attachments...), f.err
+}
+
+func (f *fakeImageReader) AttachPastedImagePaths(_ context.Context, value string) ([]clipboard.Attachment, error) {
+	f.pasteCalls++
+	f.lastPasted = value
+	return append([]clipboard.Attachment(nil), f.pastedAttachments...), f.pasteErr
 }
