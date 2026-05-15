@@ -4,7 +4,7 @@ title: Add pasted images to Postiz posts
 status: In Progress
 assignee: []
 created_date: '2026-05-15 07:15'
-updated_date: '2026-05-15 12:08'
+updated_date: '2026-05-15 12:14'
 labels: []
 dependencies: []
 priority: high
@@ -61,4 +61,10 @@ Re-verified after bundling macOS clipboard bitmap support: GOCACHE=/private/tmp/
 Manual feedback: cmd+v text paste reached the TUI, but image paste did not; OpenCode behavior suggests terminals can expose Command+V through enhanced keyboard protocols. Added Kitty keyboard protocol activation at TUI startup and fallback parsing for Bubble Tea unknown CSI-u Super+V events, routing them to the existing clipboard image paste flow.
 
 Re-verified after enhanced keyboard cmd+v support: GOCACHE=/private/tmp/dispatch-go-build go test -count=1 ./... passed outside sandbox for httptest local ports; GOCACHE=/private/tmp/dispatch-go-build make build passed outside sandbox for Go module cache writes; git diff --check passed.
+
+Manual feedback: cmd+v still did not visibly attach an image. Added a /debug keys TUI mode and DISPATCH_DEBUG_KEYS=1 startup flag to print non-persistent key-event diagnostics in the chat, including unknown CSI sequences and whether they decode as Kitty Super+V. Also stabilized a macOS clipboard test by mocking the native pasteboard reader so the test no longer depends on the user clipboard contents.
+
+Re-verified after key-debug instrumentation: GOCACHE=/private/tmp/dispatch-go-build go test -count=1 ./... passed outside sandbox for httptest local ports; GOCACHE=/private/tmp/dispatch-go-build make build passed outside sandbox for Go module cache writes; git diff --check passed.
+
+Debug observation: user pasted the literal text `DISPATCH_DEBUG_KEYS=1 go run .` into the running TUI and dispatch logged it as a bracketed text paste (paste=true, runes=30). This confirms text paste reaches Bubble Tea; still need a debug line from pressing cmd+v after copying an actual image to determine whether the image paste event reaches dispatch.
 <!-- SECTION:NOTES:END -->

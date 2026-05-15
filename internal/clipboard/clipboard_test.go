@@ -24,10 +24,11 @@ func TestDarwinReaderSavesClipboardBitmapAsPNG(t *testing.T) {
 		},
 	}
 	reader := Reader{
-		GOOS:     "darwin",
-		Runner:   runner.run,
-		CacheDir: t.TempDir(),
-		Now:      fixedNow,
+		GOOS:                "darwin",
+		Runner:              runner.run,
+		ReadNativeDarwinPNG: func(context.Context) ([]byte, error) { return nil, ErrUnavailable },
+		CacheDir:            t.TempDir(),
+		Now:                 fixedNow,
 	}
 
 	attachments, err := reader.ReadImages(context.Background())
@@ -59,10 +60,11 @@ func TestDarwinReaderReportsUnavailableWhenBitmapExistsButCannotBeRead(t *testin
 		},
 	}
 	reader := Reader{
-		GOOS:     "darwin",
-		Runner:   runner.run,
-		CacheDir: t.TempDir(),
-		Now:      fixedNow,
+		GOOS:                "darwin",
+		Runner:              runner.run,
+		ReadNativeDarwinPNG: func(context.Context) ([]byte, error) { return nil, ErrUnavailable },
+		CacheDir:            t.TempDir(),
+		Now:                 fixedNow,
 	}
 
 	_, err := reader.ReadImages(context.Background())

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -73,6 +74,7 @@ type Model struct {
 	showHelp    bool
 	stream      <-chan provider.Chunk
 	activeMsg   int
+	keyDebug    bool
 }
 
 func New(cfg config.Config, chatAgent *agent.Agent, warnings []string) Model {
@@ -108,6 +110,7 @@ func newModel(cfg config.Config, chatAgent *agent.Agent, warnings []string, stor
 		imageReader: clip.NewReader(),
 		activeMsg:   -1,
 		messages:    defaultMessages(),
+		keyDebug:    os.Getenv("DISPATCH_DEBUG_KEYS") == "1",
 	}
 	if store != nil {
 		sess, err := store.Load()
@@ -159,6 +162,8 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
+	m.logKeyDebug(msg)
 
 	if isKittySuperVPaste(msg) && m.pasteClipboardImages() {
 		return m, nil
@@ -230,6 +235,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(attachments) == 0 && isSessionCommand(value) {
 				return m.handleSessionCommand(value)
 			}
+			if len(attachments) == 0 && isDebugCommand(value) {
+				return m.handleDebugCommand(value)
+			}
 			visibleValue := value
 			if visibleValue == "" {
 				visibleValue = attachmentCountText(len(attachments)) + " angehaengt"
@@ -282,6 +290,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func isSessionCommand(value string) bool {
 	return value == "/session" || strings.HasPrefix(value, "/session ")
+}
+
+func isDebugCommand(value string) bool {
+	return value == "/debug keys"
+}
+
+func (m Model) handleDebugCommand(value string) (tea.Model, tea.Cmd) {
+	if value != "/debug keys" {
+		return m, nil
+	}
+	m.keyDebug = !m.keyDebug
+	status := "aus"
+	if m.keyDebug {
+		status = "an"
+	}
+	m.addMessageNoPersist(kindSystem, fmt.Sprintf("Key-Debug ist %s. Tastenevents werden nur in dieser TUI-Session angezeigt.", status))
+	return m, nil
+}
+
+func (m *Model) logKeyDebug(msg tea.Msg) {
+	if !m.keyDebug {
+		return
+	}
+	if line := debugKeyEvent(msg); line != "" {
+		m.addMessageNoPersist(kindSystem, "Debug key: "+line)
+	}
+}
+
+func debugKeyEvent(msg tea.Msg) string {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return fmt.Sprintf("key=%q type=%d paste=%t alt=%t runes=%d", msg.String(), msg.Type, msg.Paste, msg.Alt, len(msg.Runes))
+	default:
+		stringer, ok := msg.(fmt.Stringer)
+		if !ok {
+			return ""
+		}
+		raw := stringer.String()
+		csi, ok := bubbleTeaUnknownCSI(raw)
+		if !ok {
+			return ""
+		}
+		return fmt.Sprintf("unknown-csi=%q decoded=%q kitty_super_v=%t", raw, csi, kittySuperVCSI(csi))
+	}
 }
 
 func isKittySuperVPaste(msg tea.Msg) bool {

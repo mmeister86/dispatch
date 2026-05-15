@@ -556,6 +556,27 @@ func TestKittySuperVPastesClipboardImageAttachments(t *testing.T) {
 	}
 }
 
+func TestDebugKeysCommandLogsUnknownCSIEvents(t *testing.T) {
+	reader := &fakeImageReader{err: clipboard.ErrNoImages}
+	m := New(config.Config{}, nil, nil)
+	m.imageReader = reader
+	m.layout()
+	m.textarea.SetValue("/debug keys")
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if !m.keyDebug {
+		t.Fatal("key debug should be enabled")
+	}
+
+	model, _ = m.Update(fakeStringerMsg("?CSI[49 49 56 59 57 117]?"))
+	m = model.(Model)
+
+	if !containsMessage(m.messages, `Debug key: unknown-csi="?CSI[49 49 56 59 57 117]?" decoded="118;9u" kitty_super_v=true`) {
+		t.Fatalf("debug log missing unknown CSI details: %#v", m.messages)
+	}
+}
+
 func TestBracketedPasteImagePathAppendsAttachmentInsteadOfText(t *testing.T) {
 	reader := &fakeImageReader{pastedAttachments: []clipboard.Attachment{
 		{Path: "/tmp/cached-photo.png", OriginalName: "photo.png", MIMEType: "image/png", Source: "file"},

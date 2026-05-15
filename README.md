@@ -157,6 +157,7 @@ Inside the TUI:
 /session new          # start a new session
 /session open <id>    # open a saved session
 /session delete <id>  # delete a non-active session
+/debug keys           # toggle non-persistent key event logs in the chat
 ```
 
 Session directories are written with `0700` permissions and session files with
@@ -180,6 +181,12 @@ that case, `ctrl+v` remains the reliable image-paste shortcut. For raw clipboard
 images, macOS bitmap support is built into the dispatch binary; Linux uses
 `wl-paste`, `xclip`, or `xsel`; Windows uses PowerShell's Clipboard APIs. Use
 `ctrl+x` before sending to clear pending image attachments.
+
+To diagnose terminal paste behavior, run `/debug keys` in the TUI or start with
+`DISPATCH_DEBUG_KEYS=1 dispatch`. When enabled, dispatch prints non-persistent
+debug lines for key events and unknown terminal CSI sequences. If pressing
+`cmd+v` produces no debug line, the terminal did not forward the event to
+dispatch.
 
 For X/Twitter threads, pass `thread_parts`. Each array item becomes one tweet in
 the same Postiz thread:
