@@ -8,24 +8,26 @@ var palette = struct {
 	line     lipgloss.Color
 	text     lipgloss.Color
 	dim      lipgloss.Color
+	muted    lipgloss.Color
 	green    lipgloss.Color
-	blue     lipgloss.Color
+	teal     lipgloss.Color
 	amber    lipgloss.Color
 	purple   lipgloss.Color
 	warning  lipgloss.Color
 	errorRed lipgloss.Color
 }{
 	bg:       lipgloss.Color("#070b09"),
-	surface:  lipgloss.Color("#070b09"),
-	line:     lipgloss.Color("#203026"),
-	text:     lipgloss.Color("#d6ead2"),
-	dim:      lipgloss.Color("#78927c"),
-	green:    lipgloss.Color("#98e69f"),
-	blue:     lipgloss.Color("#83bed1"),
-	amber:    lipgloss.Color("#e0b35a"),
-	purple:   lipgloss.Color("#baa0df"),
-	warning:  lipgloss.Color("#e0b35a"),
-	errorRed: lipgloss.Color("#e27a7a"),
+	surface:  lipgloss.Color("#0c120f"),
+	line:     lipgloss.Color("#182620"),
+	text:     lipgloss.Color("#c4dcc0"),
+	dim:      lipgloss.Color("#5a7a62"),
+	muted:    lipgloss.Color("#3a5242"),
+	green:    lipgloss.Color("#7ed690"),
+	teal:     lipgloss.Color("#6bb8c8"),
+	amber:    lipgloss.Color("#c4a860"),
+	purple:   lipgloss.Color("#9a8ec0"),
+	warning:  lipgloss.Color("#c4a040"),
+	errorRed: lipgloss.Color("#c86060"),
 }
 
 type styles struct {
@@ -43,6 +45,7 @@ type styles struct {
 	system    lipgloss.Style
 	tool      lipgloss.Style
 	accent    lipgloss.Style
+	divider   lipgloss.Style
 }
 
 func newStyles() styles {
@@ -72,23 +75,26 @@ func newStyles() styles {
 		prompt: lipgloss.NewStyle().
 			Foreground(palette.green),
 		shortcuts: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#5f7a63")),
+			Foreground(palette.muted),
 		label: lipgloss.NewStyle().
-			Faint(true),
+			Foreground(palette.muted),
 		user: lipgloss.NewStyle().
-			Foreground(palette.blue).
+			Foreground(palette.teal).
 			PaddingLeft(1),
 		agent: lipgloss.NewStyle().
 			Foreground(palette.text).
 			PaddingLeft(1),
 		system: lipgloss.NewStyle().
 			Foreground(palette.purple).
-			PaddingLeft(1),
+			PaddingLeft(1).
+			Faint(true),
 		tool: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#b9954f")).
+			Foreground(palette.amber).
 			PaddingLeft(1).
 			Faint(true),
 		accent: lipgloss.NewStyle().
 			Foreground(palette.amber),
+		divider: lipgloss.NewStyle().
+			Foreground(palette.line),
 	}
 }
