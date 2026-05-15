@@ -4,7 +4,7 @@ title: Add pasted images to Postiz posts
 status: In Progress
 assignee: []
 created_date: '2026-05-15 07:15'
-updated_date: '2026-05-15 12:14'
+updated_date: '2026-05-15 12:38'
 labels: []
 dependencies: []
 priority: high
@@ -67,4 +67,6 @@ Manual feedback: cmd+v still did not visibly attach an image. Added a /debug key
 Re-verified after key-debug instrumentation: GOCACHE=/private/tmp/dispatch-go-build go test -count=1 ./... passed outside sandbox for httptest local ports; GOCACHE=/private/tmp/dispatch-go-build make build passed outside sandbox for Go module cache writes; git diff --check passed.
 
 Debug observation: user pasted the literal text `DISPATCH_DEBUG_KEYS=1 go run .` into the running TUI and dispatch logged it as a bracketed text paste (paste=true, runes=30). This confirms text paste reaches Bubble Tea; still need a debug line from pressing cmd+v after copying an actual image to determine whether the image paste event reaches dispatch.
+
+Footer-Hinweis ergänzt: ctrl+v bild einfuegen, ctrl+x anhaenge loeschen und cmd+v-Terminal-Weitergabe werden dauerhaft im Footer angezeigt. Footer-Hoehe passt sich bei pending attachments an.
 <!-- SECTION:NOTES:END -->

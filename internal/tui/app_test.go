@@ -532,6 +532,25 @@ func TestCtrlVAppendsClipboardImageAttachments(t *testing.T) {
 	}
 }
 
+func TestFooterExplainsReliableImagePasteShortcut(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.width = 110
+	m.height = 24
+	m.layout()
+
+	footer := strings.Join(strings.Fields(m.renderFooter()), " ")
+
+	if !strings.Contains(footer, "ctrl+v bild einfuegen") {
+		t.Fatalf("footer should explain reliable image paste shortcut: %q", footer)
+	}
+	if !strings.Contains(footer, "ctrl+x anhaenge loeschen") {
+		t.Fatalf("footer should explain attachment removal shortcut: %q", footer)
+	}
+	if !strings.Contains(footer, "cmd+v muss vom Terminal weitergereicht werden") {
+		t.Fatalf("footer should explain cmd+v terminal dependency: %q", footer)
+	}
+}
+
 func TestKittySuperVPastesClipboardImageAttachments(t *testing.T) {
 	reader := &fakeImageReader{attachments: []clipboard.Attachment{
 		{Path: "/tmp/screenshot.png", OriginalName: "screenshot.png", MIMEType: "image/png", Source: "clipboard"},

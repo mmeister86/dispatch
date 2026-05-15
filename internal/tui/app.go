@@ -199,6 +199,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+x":
 			if len(m.attachments) > 0 {
 				m.attachments = nil
+				m.layout()
 				m.addMessageNoPersist(kindSystem, "Bildanhaenge entfernt.")
 				return m, nil
 			}
@@ -232,6 +233,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.textarea.Reset()
 			m.attachments = nil
+			if len(attachments) > 0 {
+				m.layout()
+			}
 			if len(attachments) == 0 && isSessionCommand(value) {
 				return m.handleSessionCommand(value)
 			}
@@ -408,6 +412,7 @@ func (m *Model) pasteClipboardImages() bool {
 		return false
 	}
 	m.attachments = append(m.attachments, attachments...)
+	m.layout()
 	m.addMessageNoPersist(kindSystem, attachmentCountText(len(attachments))+" angehaengt. Mit Enter mitsenden, mit ctrl+x entfernen.")
 	return true
 }
@@ -430,6 +435,7 @@ func (m *Model) pasteImagePaths(value string) bool {
 		return false
 	}
 	m.attachments = append(m.attachments, attachments...)
+	m.layout()
 	m.addMessageNoPersist(kindSystem, attachmentCountText(len(attachments))+" angehaengt. Mit Enter mitsenden, mit ctrl+x entfernen.")
 	return true
 }
@@ -562,8 +568,8 @@ func (m *Model) layout() {
 	const (
 		headerHeight = 2
 		bodyChrome   = 4
-		footerHeight = 3
 	)
+	footerHeight := m.footerHeight()
 	bodyHeight := max(1, m.height-headerHeight-bodyChrome-footerHeight)
 	bodyWidth := max(20, m.width-6)
 
@@ -577,6 +583,14 @@ func (m *Model) layout() {
 
 	m.textarea.SetWidth(max(20, m.width-6))
 	m.refreshViewport()
+}
+
+func (m Model) footerHeight() int {
+	height := 4 // top border, input, shortcuts, image-paste hint
+	if len(m.attachments) > 0 {
+		height++
+	}
+	return height
 }
 
 func (m Model) paintCanvas(view string) string {
@@ -671,16 +685,14 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	input := m.textarea.View()
-	shortcutText := "ctrl+p posts   ctrl+o konten   ctrl+r repos   ctrl+s suche   ctrl+v bild   ctrl+c abbrechen   ? hilfe"
-	if len(m.attachments) > 0 {
-		shortcutText += "   ctrl+x bilder entfernen"
-	}
+	shortcutText := "ctrl+p posts   ctrl+o konten   ctrl+r repos   ctrl+s suche   ctrl+c abbrechen   ? hilfe"
 	shortcuts := m.styles.shortcuts.Render(shortcutText)
+	imagePasteHint := m.styles.shortcuts.Render("Bildpaste: ctrl+v bild einfuegen   ctrl+x anhaenge loeschen   cmd+v muss vom Terminal weitergereicht werden")
 	attachmentStatus := ""
 	if len(m.attachments) > 0 {
 		attachmentStatus = "\n" + m.styles.accent.Render(attachmentCountText(len(m.attachments))+" angehaengt")
 	}
-	return m.styles.footer.Width(m.width).Render(input + attachmentStatus + "\n" + shortcuts)
+	return m.styles.footer.Width(m.width).Render(input + attachmentStatus + "\n" + shortcuts + "\n" + imagePasteHint)
 }
 
 func (m Model) renderMessage(msg chatMessage) string {
