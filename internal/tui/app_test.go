@@ -532,6 +532,30 @@ func TestCtrlVAppendsClipboardImageAttachments(t *testing.T) {
 	}
 }
 
+func TestKittySuperVPastesClipboardImageAttachments(t *testing.T) {
+	reader := &fakeImageReader{attachments: []clipboard.Attachment{
+		{Path: "/tmp/screenshot.png", OriginalName: "screenshot.png", MIMEType: "image/png", Source: "clipboard"},
+	}}
+	m := New(config.Config{}, nil, nil)
+	m.imageReader = reader
+	m.width = 96
+	m.height = 24
+	m.layout()
+
+	model, _ := m.Update(fakeStringerMsg("?CSI[49 49 56 59 57 117]?"))
+	m = model.(Model)
+
+	if reader.calls != 1 {
+		t.Fatalf("ReadImages calls = %d, want 1", reader.calls)
+	}
+	if len(m.attachments) != 1 {
+		t.Fatalf("attachments = %#v", m.attachments)
+	}
+	if !containsMessage(m.messages, "1 Bild angehaengt") {
+		t.Fatalf("pasting attachments should add a visible confirmation: %#v", m.messages)
+	}
+}
+
 func TestBracketedPasteImagePathAppendsAttachmentInsteadOfText(t *testing.T) {
 	reader := &fakeImageReader{pastedAttachments: []clipboard.Attachment{
 		{Path: "/tmp/cached-photo.png", OriginalName: "photo.png", MIMEType: "image/png", Source: "file"},
@@ -700,6 +724,12 @@ func stripANSI(value string) string {
 		b.WriteByte(ch)
 	}
 	return b.String()
+}
+
+type fakeStringerMsg string
+
+func (m fakeStringerMsg) String() string {
+	return string(m)
 }
 
 type fakeImageReader struct {

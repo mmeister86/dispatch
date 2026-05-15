@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -159,6 +160,10 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	if isKittySuperVPaste(msg) && m.pasteClipboardImages() {
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -277,6 +282,56 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func isSessionCommand(value string) bool {
 	return value == "/session" || strings.HasPrefix(value, "/session ")
+}
+
+func isKittySuperVPaste(msg tea.Msg) bool {
+	stringer, ok := msg.(fmt.Stringer)
+	if !ok {
+		return false
+	}
+	csi, ok := bubbleTeaUnknownCSI(stringer.String())
+	if !ok {
+		return false
+	}
+	return kittySuperVCSI(csi)
+}
+
+func bubbleTeaUnknownCSI(value string) (string, bool) {
+	const prefix = "?CSI["
+	const suffix = "]?"
+	if !strings.HasPrefix(value, prefix) || !strings.HasSuffix(value, suffix) {
+		return "", false
+	}
+	fields := strings.Fields(strings.TrimSuffix(strings.TrimPrefix(value, prefix), suffix))
+	var b strings.Builder
+	for _, field := range fields {
+		code, err := strconv.Atoi(field)
+		if err != nil || code < 0 || code > 255 {
+			return "", false
+		}
+		b.WriteByte(byte(code))
+	}
+	return b.String(), true
+}
+
+func kittySuperVCSI(value string) bool {
+	if !strings.HasSuffix(value, "u") {
+		return false
+	}
+	parts := strings.Split(strings.TrimSuffix(value, "u"), ";")
+	if len(parts) < 2 {
+		return false
+	}
+	keyCode, err := strconv.Atoi(strings.Split(parts[0], ":")[0])
+	if err != nil {
+		return false
+	}
+	modifier, err := strconv.Atoi(strings.Split(parts[1], ":")[0])
+	if err != nil {
+		return false
+	}
+	const kittySuperModifier = 8
+	return (keyCode == 'v' || keyCode == 'V') && modifier > 1 && (modifier-1)&kittySuperModifier != 0
 }
 
 func (m *Model) pasteClipboardImages() bool {

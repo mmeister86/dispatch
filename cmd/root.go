@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/matthias/dispatch/config"
 	"github.com/matthias/dispatch/internal/agent"
 	"github.com/matthias/dispatch/internal/provider"
@@ -106,9 +108,23 @@ func runTUI(path string) error {
 		}
 	}
 
+	restoreKeyboard := enableEnhancedKeyboard(os.Stdout)
+	defer restoreKeyboard()
+
 	p := tea.NewProgram(tui.NewWithSessionStore(cfg, chatAgent, warnings, session.NewStore("")), tea.WithAltScreen())
 	_, err = p.Run()
 	return err
+}
+
+func enableEnhancedKeyboard(output *os.File) func() {
+	if output == nil || runtime.GOOS == "windows" || !term.IsTerminal(int(output.Fd())) {
+		return func() {}
+	}
+	flags := ansi.KittyDisambiguateEscapeCodes | ansi.KittyReportAllKeysAsEscapeCodes
+	_, _ = io.WriteString(output, ansi.PushKittyKeyboard(flags))
+	return func() {
+		_, _ = io.WriteString(output, ansi.PopKittyKeyboard(1))
+	}
 }
 
 const systemPrompt = `Du bist dispatch, ein Assistent fuer Developer, der bei der Social-Media-Planung hilft.

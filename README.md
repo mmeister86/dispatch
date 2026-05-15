@@ -127,6 +127,7 @@ The TUI includes shortcuts for common tool prompts:
 | `ctrl+r` | summarize GitHub activity from the last 7 days |
 | `ctrl+s` | research current developer social topics with citations |
 | `ctrl+v` | attach image files or a clipboard image to the current prompt |
+| `cmd+v` | attach images on macOS terminals that forward Command as Super |
 | `ctrl+x` | clear pending image attachments |
 | `ctrl+l` | clear the current chat/session |
 | `ctrl+c` | cancel a running agent call, or quit when idle |
@@ -172,11 +173,13 @@ message. The agent uploads each local file through `upload_media` and then uses
 the returned media paths in `create_post.media_urls`; the normal preview and
 explicit confirmation gate still applies before a Postiz post is created.
 
-`cmd+v` works only when the terminal forwards it as a normal paste event; some
-terminals handle Cmd shortcuts before TUI programs can see them. For raw
-clipboard images, macOS bitmap support is built into the dispatch binary; Linux
-uses `wl-paste`, `xclip`, or `xsel`; Windows uses PowerShell's Clipboard APIs.
-Use `ctrl+x` before sending to clear pending image attachments.
+On startup, dispatch asks compatible terminals to forward enhanced keyboard
+events so `cmd+v` can be detected as `Super+V` on macOS. Terminals that consume
+Command shortcuts internally may still hide the key event from TUI programs; in
+that case, `ctrl+v` remains the reliable image-paste shortcut. For raw clipboard
+images, macOS bitmap support is built into the dispatch binary; Linux uses
+`wl-paste`, `xclip`, or `xsel`; Windows uses PowerShell's Clipboard APIs. Use
+`ctrl+x` before sending to clear pending image attachments.
 
 For X/Twitter threads, pass `thread_parts`. Each array item becomes one tweet in
 the same Postiz thread:

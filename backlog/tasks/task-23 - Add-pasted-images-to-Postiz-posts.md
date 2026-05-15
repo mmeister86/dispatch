@@ -4,7 +4,7 @@ title: Add pasted images to Postiz posts
 status: In Progress
 assignee: []
 created_date: '2026-05-15 07:15'
-updated_date: '2026-05-15 11:53'
+updated_date: '2026-05-15 12:08'
 labels: []
 dependencies: []
 priority: high
@@ -57,4 +57,8 @@ Re-verified after cmd+v bracketed paste path handling: GOCACHE=/private/tmp/disp
 Manual feedback: pngpaste should not be a required system dependency. Implemented bundled macOS clipboard bitmap support via AppKit/Foundation inside the dispatch binary, with pngpaste remaining only as an optional legacy fallback. README now documents that cmd+v is only available if the terminal forwards it to the TUI.
 
 Re-verified after bundling macOS clipboard bitmap support: GOCACHE=/private/tmp/dispatch-go-build go test -count=1 ./... passed; GOCACHE=/private/tmp/dispatch-go-build make build passed; git diff --check passed.
+
+Manual feedback: cmd+v text paste reached the TUI, but image paste did not; OpenCode behavior suggests terminals can expose Command+V through enhanced keyboard protocols. Added Kitty keyboard protocol activation at TUI startup and fallback parsing for Bubble Tea unknown CSI-u Super+V events, routing them to the existing clipboard image paste flow.
+
+Re-verified after enhanced keyboard cmd+v support: GOCACHE=/private/tmp/dispatch-go-build go test -count=1 ./... passed outside sandbox for httptest local ports; GOCACHE=/private/tmp/dispatch-go-build make build passed outside sandbox for Go module cache writes; git diff --check passed.
 <!-- SECTION:NOTES:END -->
