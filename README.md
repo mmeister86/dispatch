@@ -172,9 +172,9 @@ message. The agent uploads each local file through `upload_media` and then uses
 the returned media paths in `create_post.media_urls`; the normal preview and
 explicit confirmation gate still applies before a Postiz post is created.
 
-`cmd+v` works when the terminal forwards it as a normal paste event. For raw
-clipboard images, platform clipboard helpers must be available: macOS uses
-`pngpaste` for bitmap clipboard data and AppleScript for copied files; Linux
+`cmd+v` works only when the terminal forwards it as a normal paste event; some
+terminals handle Cmd shortcuts before TUI programs can see them. For raw
+clipboard images, macOS bitmap support is built into the dispatch binary; Linux
 uses `wl-paste`, `xclip`, or `xsel`; Windows uses PowerShell's Clipboard APIs.
 Use `ctrl+x` before sending to clear pending image attachments.
 

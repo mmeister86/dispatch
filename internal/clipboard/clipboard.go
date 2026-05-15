@@ -28,12 +28,14 @@ type Attachment struct {
 }
 
 type Runner func(context.Context, string, ...string) ([]byte, error)
+type NativeDarwinPNGReader func(context.Context) ([]byte, error)
 
 type Reader struct {
-	GOOS     string
-	Runner   Runner
-	CacheDir string
-	Now      func() time.Time
+	GOOS                string
+	Runner              Runner
+	ReadNativeDarwinPNG NativeDarwinPNGReader
+	CacheDir            string
+	Now                 func() time.Time
 }
 
 func NewReader() Reader {
@@ -75,6 +77,9 @@ func (r *Reader) prepare() error {
 	if r.Runner == nil {
 		r.Runner = runCommand
 	}
+	if r.ReadNativeDarwinPNG == nil {
+		r.ReadNativeDarwinPNG = readNativeDarwinPNG
+	}
 	if r.Now == nil {
 		r.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -95,9 +100,16 @@ func (r Reader) readDarwin(ctx context.Context) ([]Attachment, error) {
 			attachments = append(attachments, attachment)
 		}
 	}
+	if len(attachments) == 0 && errors.Is(err, ErrUnavailable) {
+		if image, nativeErr := r.ReadNativeDarwinPNG(ctx); nativeErr == nil && isPNG(image) {
+			if attachment, err := r.saveImageBytes(image, "clipboard.png", "image/png", "clipboard"); err == nil {
+				attachments = append(attachments, attachment)
+			}
+		}
+	}
 	if len(attachments) == 0 {
 		if errors.Is(err, ErrUnavailable) && r.darwinClipboardHasBitmap(ctx) {
-			return nil, fmt.Errorf("%w: pngpaste fehlt fuer macOS-Bilddaten aus der Zwischenablage", ErrUnavailable)
+			return nil, fmt.Errorf("%w: macOS-Bilddaten konnten nicht aus der Zwischenablage gelesen werden", ErrUnavailable)
 		}
 		return nil, ErrNoImages
 	}

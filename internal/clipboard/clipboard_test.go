@@ -50,7 +50,7 @@ func TestDarwinReaderSavesClipboardBitmapAsPNG(t *testing.T) {
 	}
 }
 
-func TestDarwinReaderReportsUnavailableWhenBitmapExistsButPNGPasteIsMissing(t *testing.T) {
+func TestDarwinReaderReportsUnavailableWhenBitmapExistsButCannotBeRead(t *testing.T) {
 	runner := fakeRunner{
 		responses: map[string]fakeResponse{
 			"osascript|-e|set output to \"\"|-e|try|-e|set theFiles to the clipboard as «class furl»|-e|repeat with f in theFiles|-e|set output to output & POSIX path of f & linefeed|-e|end repeat|-e|output|-e|on error|-e|\"\"|-e|end try": {},
@@ -69,8 +69,43 @@ func TestDarwinReaderReportsUnavailableWhenBitmapExistsButPNGPasteIsMissing(t *t
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
-	if !strings.Contains(err.Error(), "pngpaste") {
-		t.Fatalf("error should name pngpaste: %v", err)
+	if strings.Contains(err.Error(), "pngpaste") {
+		t.Fatalf("error should not require pngpaste: %v", err)
+	}
+}
+
+func TestDarwinReaderUsesBundledBitmapReaderWhenPNGPasteIsMissing(t *testing.T) {
+	runner := fakeRunner{
+		responses: map[string]fakeResponse{
+			"osascript|-e|set output to \"\"|-e|try|-e|set theFiles to the clipboard as «class furl»|-e|repeat with f in theFiles|-e|set output to output & POSIX path of f & linefeed|-e|end repeat|-e|output|-e|on error|-e|\"\"|-e|end try": {},
+			"pngpaste|-": {err: ErrUnavailable},
+		},
+	}
+	reader := Reader{
+		GOOS:                "darwin",
+		Runner:              runner.run,
+		ReadNativeDarwinPNG: func(context.Context) ([]byte, error) { return tinyPNG, nil },
+		CacheDir:            t.TempDir(),
+		Now:                 fixedNow,
+	}
+
+	attachments, err := reader.ReadImages(context.Background())
+	if err != nil {
+		t.Fatalf("ReadImages returned error: %v", err)
+	}
+	if len(attachments) != 1 {
+		t.Fatalf("attachments = %#v", attachments)
+	}
+	got := attachments[0]
+	if got.Source != "clipboard" || got.MIMEType != "image/png" || got.OriginalName != "clipboard.png" {
+		t.Fatalf("attachment metadata = %#v", got)
+	}
+	content, err := os.ReadFile(got.Path)
+	if err != nil {
+		t.Fatalf("read saved image: %v", err)
+	}
+	if !bytes.Equal(content, tinyPNG) {
+		t.Fatalf("saved image mismatch: %#v", content)
 	}
 }
 
