@@ -55,6 +55,27 @@ type imageReader interface {
 	AttachPastedImagePaths(context.Context, string) ([]clip.Attachment, error)
 }
 
+type slashCommandKind int
+
+const (
+	slashCommandKindSession slashCommandKind = iota
+	slashCommandKindDebug
+)
+
+type slashCommand struct {
+	Display string
+	Insert  string
+	Kind    slashCommandKind
+}
+
+var slashCommands = []slashCommand{
+	{Display: "/session", Insert: "/session", Kind: slashCommandKindSession},
+	{Display: "/session new", Insert: "/session new", Kind: slashCommandKindSession},
+	{Display: "/session open <id>", Insert: "/session open ", Kind: slashCommandKindSession},
+	{Display: "/session delete <id>", Insert: "/session delete ", Kind: slashCommandKindSession},
+	{Display: "/debug keys", Insert: "/debug keys", Kind: slashCommandKindDebug},
+}
+
 type Model struct {
 	cfg         config.Config
 	agent       *agent.Agent
@@ -225,6 +246,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.startAgent("Zeige mir GitHub-Aktivitaet aus allen Repos der letzten 7 Tage.")
 		case "ctrl+s":
 			return m.startAgent("Welche Themen sind aktuell relevant fuer Developer Social Posts? Recherchiere mit Quellen.")
+		case "tab":
+			if m.completeSlashCommand() {
+				return m, nil
+			}
 		case "enter":
 			value := strings.TrimSpace(m.textarea.Value())
 			attachments := append([]clip.Attachment(nil), m.attachments...)
@@ -284,20 +309,79 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
+	previousFooterHeight := m.footerHeight()
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
 	m.textarea, cmd = m.textarea.Update(msg)
 	cmds = append(cmds, cmd)
+	if m.footerHeight() != previousFooterHeight {
+		m.layout()
+	}
 
 	return m, tea.Batch(cmds...)
 }
 
 func isSessionCommand(value string) bool {
-	return value == "/session" || strings.HasPrefix(value, "/session ")
+	return isSlashCommandKind(value, slashCommandKindSession)
 }
 
 func isDebugCommand(value string) bool {
-	return value == "/debug keys"
+	cmd, ok := exactSlashCommand(value)
+	return ok && cmd.Kind == slashCommandKindDebug
+}
+
+func isSlashCommandKind(value string, kind slashCommandKind) bool {
+	value = strings.TrimSpace(value)
+	for _, cmd := range slashCommands {
+		if cmd.Kind != kind {
+			continue
+		}
+		insert := strings.TrimSpace(cmd.Insert)
+		if value == insert || strings.HasPrefix(value, insert+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func exactSlashCommand(value string) (slashCommand, bool) {
+	value = strings.TrimSpace(value)
+	for _, cmd := range slashCommands {
+		if strings.TrimSpace(cmd.Insert) == value {
+			return cmd, true
+		}
+	}
+	return slashCommand{}, false
+}
+
+func slashCommandSuggestions(value string) []slashCommand {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "/") {
+		return nil
+	}
+
+	var matches []slashCommand
+	for _, cmd := range slashCommands {
+		if slashCommandMatches(cmd, value) {
+			matches = append(matches, cmd)
+		}
+	}
+	return matches
+}
+
+func slashCommandMatches(cmd slashCommand, value string) bool {
+	display := strings.TrimSpace(cmd.Display)
+	insert := strings.TrimSpace(cmd.Insert)
+	return strings.HasPrefix(display, value) || strings.HasPrefix(insert, value)
+}
+
+func (m *Model) completeSlashCommand() bool {
+	matches := slashCommandSuggestions(m.textarea.Value())
+	if len(matches) == 0 {
+		return false
+	}
+	m.textarea.SetValue(matches[0].Insert)
+	return true
 }
 
 func (m Model) handleDebugCommand(value string) (tea.Model, tea.Cmd) {
@@ -590,6 +674,9 @@ func (m Model) footerHeight() int {
 	if len(m.attachments) > 0 {
 		height++
 	}
+	if len(m.slashCommandSuggestions()) > 0 {
+		height++
+	}
 	return height
 }
 
@@ -692,7 +779,28 @@ func (m Model) renderFooter() string {
 	if len(m.attachments) > 0 {
 		attachmentStatus = "\n" + m.styles.accent.Render(attachmentCountText(len(m.attachments))+" angehaengt")
 	}
-	return m.styles.footer.Width(m.width).Render(input + attachmentStatus + "\n" + shortcuts + "\n" + imagePasteHint)
+	commandSuggestions := ""
+	if rendered := m.renderSlashCommandSuggestions(); rendered != "" {
+		commandSuggestions = "\n" + rendered
+	}
+	return m.styles.footer.Width(m.width).Render(input + attachmentStatus + commandSuggestions + "\n" + shortcuts + "\n" + imagePasteHint)
+}
+
+func (m Model) slashCommandSuggestions() []slashCommand {
+	return slashCommandSuggestions(m.textarea.Value())
+}
+
+func (m Model) renderSlashCommandSuggestions() string {
+	matches := m.slashCommandSuggestions()
+	if len(matches) == 0 {
+		return ""
+	}
+
+	labels := make([]string, 0, len(matches))
+	for _, cmd := range matches {
+		labels = append(labels, cmd.Display)
+	}
+	return m.styles.shortcuts.Render("Befehle: " + strings.Join(labels, " · ") + "  ·  tab vervollstaendigt")
 }
 
 func (m Model) renderMessage(msg chatMessage) string {
@@ -768,7 +876,7 @@ func agentPromptWithAttachments(value string, attachments []clip.Attachment) str
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("\nLade jedes lokale Bild zuerst mit dem Postiz-Tool upload_media hoch. Verwende die zurueckgegebenen Medien-URLs oder Pfade anschliessend in create_post.media_urls. Erstelle keinen Post ohne Vorschau und explizite Bestaetigung des Users.")
+	b.WriteString("\nLade jedes lokale Bild zuerst mit dem Postiz-Tool upload_media hoch. Verwende die zurueckgegebenen Medienobjekte mit id und path anschliessend in create_post.media. Erstelle keinen Post ohne Vorschau und explizite Bestaetigung des Users.")
 	return b.String()
 }
 

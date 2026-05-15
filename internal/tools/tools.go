@@ -80,3 +80,19 @@ func stringArrayProp(description string) map[string]any {
 		"items":       map[string]any{"type": "string"},
 	}
 }
+
+func mediaArrayProp(description string) map[string]any {
+	return map[string]any{
+		"type":        "array",
+		"description": description,
+		"items": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"id":   stringProp("Postiz Upload-ID aus upload_media"),
+				"path": stringProp("Postiz Upload-Pfad/URL aus upload_media"),
+			},
+			"required": []string{"id", "path"},
+		},
+	}
+}

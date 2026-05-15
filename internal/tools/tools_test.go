@@ -261,6 +261,21 @@ func TestPostizCreatePostSchemaSupportsThreadParts(t *testing.T) {
 	if !ok || items["type"] != "string" {
 		t.Fatalf("thread_parts items = %#v", threadParts["items"])
 	}
+	media, ok := properties["media"].(map[string]any)
+	if !ok {
+		t.Fatalf("media property missing from schema: %#v", properties)
+	}
+	if media["type"] != "array" {
+		t.Fatalf("media type = %#v", media["type"])
+	}
+	mediaItems, ok := media["items"].(map[string]any)
+	if !ok || mediaItems["type"] != "object" {
+		t.Fatalf("media items = %#v", media["items"])
+	}
+	mediaRequired, ok := mediaItems["required"].([]string)
+	if !ok || !stringSliceContains(mediaRequired, "id") || !stringSliceContains(mediaRequired, "path") {
+		t.Fatalf("media required = %#v", mediaItems["required"])
+	}
 	required, ok := createPostSchema["required"].([]string)
 	if !ok {
 		t.Fatalf("required = %#v", createPostSchema["required"])
@@ -663,6 +678,69 @@ func TestPostizCreatePostUsesExplicitThreadPartsForPublicAPIThreadFallback(t *te
 
 	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
 	result, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"platform":"twitter","thread_parts":["First tweet","Second tweet"," Final tweet "],"scheduled_at":"2026-05-08T09:00:00Z","media_urls":["https://example.com/image.png"],"confirmed":true}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(result, "post-public-1") {
+		t.Fatalf("result = %s", result)
+	}
+}
+
+func TestPostizCreatePostUsesUploadedMediaIDsForPublicAPIFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/mcp/postiz-key":
+			var req struct {
+				Method string `json:"method"`
+				Params struct {
+					Name string `json:"name"`
+				} `json:"params"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode MCP request: %v", err)
+			}
+			if req.Method == "initialize" {
+				w.Header().Set("MCP-Session-Id", "session-1")
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"postiz","version":"test"}}}`))
+				return
+			}
+			if req.Params.Name != "schedulePostTool" {
+				t.Fatalf("unexpected MCP tool: %s", req.Params.Name)
+			}
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Unknown tool: schedulePostTool"}}`))
+		case "/api/public/v1/posts":
+			var req struct {
+				Posts []struct {
+					Value []struct {
+						Image []struct {
+							ID   string `json:"id"`
+							Path string `json:"path"`
+						} `json:"image"`
+					} `json:"value"`
+				} `json:"posts"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode public request: %v", err)
+			}
+			if len(req.Posts) != 1 || len(req.Posts[0].Value) != 1 {
+				t.Fatalf("posts = %#v", req.Posts)
+			}
+			images := req.Posts[0].Value[0].Image
+			if len(images) != 1 {
+				t.Fatalf("image = %#v", images)
+			}
+			if images[0].ID != "b4bb1f5a-389b-49ef-8bf2-1ced24910602" || images[0].Path != "https://postiz.example/uploads/photo.jpg" {
+				t.Fatalf("image = %#v", images[0])
+			}
+			_, _ = w.Write([]byte(`{"id":"post-public-1","state":"QUEUE"}`))
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewPostiz("", server.URL+"/api/mcp/postiz-key")
+	result, err := tool.Execute(context.Background(), "create_post", json.RawMessage(`{"integration_id":"integration-1","platform":"x","content":"dispatch now supports images","scheduled_at":"2026-05-15T12:00:00Z","media":[{"id":"b4bb1f5a-389b-49ef-8bf2-1ced24910602","path":"https://postiz.example/uploads/photo.jpg"}],"confirmed":true}`))
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}

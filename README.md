@@ -171,7 +171,7 @@ preview before scheduling anything.
 Image paste is supported in the TUI with `ctrl+v`. Pasted image files or a
 clipboard bitmap are added as pending attachments and sent with the next user
 message. The agent uploads each local file through `upload_media` and then uses
-the returned media paths in `create_post.media_urls`; the normal preview and
+the returned media `id` and `path` values in `create_post.media`; the normal preview and
 explicit confirmation gate still applies before a Postiz post is created.
 
 On startup, dispatch asks compatible terminals to forward enhanced keyboard

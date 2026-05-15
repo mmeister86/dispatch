@@ -428,6 +428,90 @@ func TestSessionCommandListsSessionsWithoutCallingAgent(t *testing.T) {
 	}
 }
 
+func TestSlashCommandSuggestionsRenderForSessionPrefix(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.width = 100
+	m.height = 24
+	m.layout()
+	m.textarea.SetValue("/ses")
+
+	footer := strings.Join(strings.Fields(m.renderFooter()), " ")
+
+	for _, want := range []string{"/session", "/session new", "/session open <id>", "/session delete <id>", "tab vervollstaendigt"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("footer missing %q:\n%s", want, footer)
+		}
+	}
+}
+
+func TestSlashCommandTabCompletesBestSessionMatch(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.layout()
+	m.textarea.SetValue("/ses")
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = model.(Model)
+
+	if got := m.textarea.Value(); got != "/session" {
+		t.Fatalf("textarea after tab = %q, want /session", got)
+	}
+}
+
+func TestSlashCommandTabCompletesPlaceholderCommandWithoutPlaceholder(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.layout()
+	m.textarea.SetValue("/session o")
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = model.(Model)
+
+	if got := m.textarea.Value(); got != "/session open " {
+		t.Fatalf("textarea after tab = %q, want /session open with trailing space", got)
+	}
+}
+
+func TestSlashCommandSuggestionsRenderForDebugCommand(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.layout()
+	m.textarea.SetValue("/debug")
+
+	footer := m.renderFooter()
+
+	if !strings.Contains(footer, "/debug keys") {
+		t.Fatalf("footer should suggest debug command:\n%s", footer)
+	}
+}
+
+func TestSlashCommandSuggestionsAreHiddenForPlainText(t *testing.T) {
+	m := New(config.Config{}, nil, nil)
+	m.layout()
+	m.textarea.SetValue("hello")
+
+	if footer := m.renderFooter(); strings.Contains(footer, "Befehle:") {
+		t.Fatalf("plain text should not show command suggestions:\n%s", footer)
+	}
+}
+
+func TestSlashCommandRegistryDrivesSuggestionsForFutureCommands(t *testing.T) {
+	original := slashCommands
+	t.Cleanup(func() {
+		slashCommands = original
+	})
+	slashCommands = append(slashCommands, slashCommand{
+		Display: "/release plan",
+		Insert:  "/release plan",
+		Kind:    slashCommandKindDebug,
+	})
+
+	m := New(config.Config{}, nil, nil)
+	m.layout()
+	m.textarea.SetValue("/rel")
+
+	if footer := m.renderFooter(); !strings.Contains(footer, "/release plan") {
+		t.Fatalf("future registry command should appear in suggestions:\n%s", footer)
+	}
+}
+
 func TestSessionNewStartsFreshLocalSession(t *testing.T) {
 	chatAgent := agent.New(tuiFakeProvider{}, "", 20)
 	chatAgent.SetHistory([]provider.Message{{Role: provider.RoleUser, Content: "Alter Kontext"}})
@@ -669,7 +753,8 @@ func TestEnterSendsAttachmentInstructionsToAgentAndClearsPendingAttachments(t *t
 	if !strings.Contains(prompt, "Plane einen Launch-Post.") ||
 		!strings.Contains(prompt, "/tmp/launch.png") ||
 		!strings.Contains(prompt, "upload_media") ||
-		!strings.Contains(prompt, "media_urls") {
+		!strings.Contains(prompt, "create_post.media") ||
+		!strings.Contains(prompt, "id und path") {
 		t.Fatalf("agent prompt missing attachment instructions:\n%s", prompt)
 	}
 }

@@ -56,7 +56,8 @@ func (p *Postiz) Definitions() []provider.ToolDefinition {
 			"content":        stringProp("Post-Text"),
 			"thread_parts":   stringArrayProp("Optionale X/Twitter-Thread-Tweets; jeder Eintrag wird ein Tweet im selben Thread"),
 			"scheduled_at":   stringProp("ISO-8601 Zeitpunkt"),
-			"media_urls":     stringArrayProp("Optionale Medien-URLs"),
+			"media":          mediaArrayProp("Optionale hochgeladene Medien aus upload_media mit id und path"),
+			"media_urls":     stringArrayProp("Optionale Legacy-Medien-URLs; nach upload_media bevorzugt media mit id und path nutzen"),
 			"confirmed":      boolProp("Muss true sein, nachdem der User die Vorschau explizit bestaetigt hat"),
 		}, "scheduled_at", "confirmed")},
 		{Name: "list_channels", Description: "Listet verbundene Postiz-Social-Channels.", Schema: objectSchema(map[string]any{})},
@@ -103,13 +104,14 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 	switch name {
 	case "create_post":
 		var req struct {
-			IntegrationID string   `json:"integration_id"`
-			Platform      string   `json:"platform"`
-			Content       string   `json:"content"`
-			ThreadParts   []string `json:"thread_parts"`
-			ScheduledAt   string   `json:"scheduled_at"`
-			MediaURLs     []string `json:"media_urls"`
-			Confirmed     bool     `json:"confirmed"`
+			IntegrationID string        `json:"integration_id"`
+			Platform      string        `json:"platform"`
+			Content       string        `json:"content"`
+			ThreadParts   []string      `json:"thread_parts"`
+			ScheduledAt   string        `json:"scheduled_at"`
+			Media         []postizMedia `json:"media"`
+			MediaURLs     []string      `json:"media_urls"`
+			Confirmed     bool          `json:"confirmed"`
 		}
 		_ = json.Unmarshal(args, &req)
 		if !req.Confirmed {
@@ -130,6 +132,7 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 		if err != nil {
 			return "", err
 		}
+		media := normalizePostizMedia(req.Media, req.MediaURLs)
 		payload := map[string]any{
 			"socialPost": []map[string]any{{
 				"integrationId":    integrationID,
@@ -137,13 +140,13 @@ func (p *Postiz) Execute(ctx context.Context, name string, args json.RawMessage)
 				"date":             postDate,
 				"shortLink":        false,
 				"type":             postType,
-				"postsAndComments": mcpPostsAndComments(parts, req.MediaURLs),
+				"postsAndComments": mcpPostsAndComments(parts, mediaPaths(media)),
 				"settings":         mcpPostSettings(req.Platform),
 			}},
 		}
 		result, err := p.callMCPTool(ctx, "schedulePostTool", payload)
 		if err != nil && isUnknownMCPTool(err, "schedulePostTool") {
-			return p.createPostPublic(ctx, integrationID, req.Platform, postType, postDate, parts, req.MediaURLs)
+			return p.createPostPublic(ctx, integrationID, req.Platform, postType, postDate, parts, media)
 		}
 		return result, err
 	case "list_posts":
@@ -473,7 +476,7 @@ func (p *Postiz) postizAPIKey() (string, error) {
 	return "", fmt.Errorf("Postiz API Key fehlt")
 }
 
-func (p *Postiz) createPostPublic(ctx context.Context, integrationID, platform, postType, postDate string, parts []string, mediaURLs []string) (string, error) {
+func (p *Postiz) createPostPublic(ctx context.Context, integrationID, platform, postType, postDate string, parts []string, media []postizMedia) (string, error) {
 	endpoint, err := p.publicAPIEndpoint()
 	if err != nil {
 		return "", err
@@ -489,7 +492,7 @@ func (p *Postiz) createPostPublic(ctx context.Context, integrationID, platform, 
 		"tags":      []any{},
 		"posts": []map[string]any{{
 			"integration": map[string]any{"id": integrationID},
-			"value":       publicPostValues(parts, mediaURLs),
+			"value":       publicPostValues(parts, media),
 			"settings":    publicPostSettings(platform),
 		}},
 	}
@@ -719,12 +722,48 @@ func mcpPostSettings(platform string) []map[string]any {
 	return []map[string]any{{"key": "who_can_reply_post", "value": "everyone"}}
 }
 
-func publicPostValues(parts []string, mediaURLs []string) []map[string]any {
+type postizMedia struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+}
+
+func normalizePostizMedia(media []postizMedia, mediaURLs []string) []postizMedia {
+	normalized := make([]postizMedia, 0, len(media)+len(mediaURLs))
+	for _, item := range media {
+		id := strings.TrimSpace(item.ID)
+		path := strings.TrimSpace(item.Path)
+		if id == "" && path == "" {
+			continue
+		}
+		normalized = append(normalized, postizMedia{ID: id, Path: path})
+	}
+	for _, mediaURL := range mediaURLs {
+		mediaURL = strings.TrimSpace(mediaURL)
+		if mediaURL == "" {
+			continue
+		}
+		normalized = append(normalized, postizMedia{Path: mediaURL})
+	}
+	return normalized
+}
+
+func mediaPaths(media []postizMedia) []string {
+	paths := make([]string, 0, len(media))
+	for _, item := range media {
+		path := strings.TrimSpace(item.Path)
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func publicPostValues(parts []string, media []postizMedia) []map[string]any {
 	values := make([]map[string]any, 0, len(parts))
 	for i, part := range parts {
 		images := []any{}
 		if i == 0 {
-			images = publicPostImages(mediaURLs)
+			images = publicPostImages(media)
 		}
 		values = append(values, map[string]any{
 			"content": strings.TrimSpace(part),
@@ -734,17 +773,25 @@ func publicPostValues(parts []string, mediaURLs []string) []map[string]any {
 	return values
 }
 
-func publicPostImages(mediaURLs []string) []any {
-	if len(mediaURLs) == 0 {
+func publicPostImages(media []postizMedia) []any {
+	if len(media) == 0 {
 		return []any{}
 	}
-	images := make([]any, 0, len(mediaURLs))
-	for _, mediaURL := range mediaURLs {
-		mediaURL = strings.TrimSpace(mediaURL)
-		if mediaURL == "" {
+	images := make([]any, 0, len(media))
+	for _, item := range media {
+		id := strings.TrimSpace(item.ID)
+		path := strings.TrimSpace(item.Path)
+		if id == "" && path == "" {
 			continue
 		}
-		images = append(images, map[string]any{"path": mediaURL})
+		image := map[string]any{}
+		if id != "" {
+			image["id"] = id
+		}
+		if path != "" {
+			image["path"] = path
+		}
+		images = append(images, image)
 	}
 	if len(images) == 0 {
 		return []any{}
