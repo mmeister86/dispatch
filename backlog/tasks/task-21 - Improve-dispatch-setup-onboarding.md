@@ -1,10 +1,10 @@
 ---
 id: TASK-21
 title: Improve dispatch setup onboarding
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-10 17:24'
-updated_date: '2026-05-10 17:42'
+updated_date: '2026-05-16 17:34'
 labels: []
 dependencies: []
 priority: high
@@ -46,3 +46,9 @@ Manual test found two setup regressions: raw-mode newlines only wrote LF, causin
 
 Fixed manual-test regressions: setup now loads the existing config as the starting point; empty secret prompts preserve existing keys instead of clearing them; masked raw-mode input now writes CRLF so following prompts return to column zero.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Verified against code and tests. dispatch --setup now provides curated provider/model selection, custom models, masked secret input with non-TTY fallback, existing-config preservation, summary confirmation, and next steps.
+<!-- SECTION:FINAL_SUMMARY:END -->

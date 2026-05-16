@@ -1,10 +1,10 @@
 ---
 id: TASK-26
 title: Use release version for local installs
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-15 13:36'
-updated_date: '2026-05-15 13:39'
+updated_date: '2026-05-16 17:34'
 labels: []
 dependencies: []
 priority: high
@@ -39,3 +39,9 @@ Make local build and install targets report the current dispatch release version
 <!-- SECTION:NOTES:BEGIN -->
 Root cause: Makefile defaulted VERSION to dev and COMMIT to none for local build/install paths, while the repository already has tag v0.1.0. Added a Makefile metadata regression check and changed defaults to derive VERSION from the latest Git tag without leading v and COMMIT from the current short SHA. Verification: make test-version passed; make build produced dispatch 0.1.0; make test passed outside sandbox because httptest needs local port binding; make install updated the installed dispatch binary; dispatch version returned dispatch 0.1.0 (6fd693a, 2026-05-15T13:38:52Z).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Verified against code and fresh build. Local make build/install metadata derives VERSION from the latest Git tag and COMMIT from HEAD; dispatch version reports 0.1.0 for the tagged checkout.
+<!-- SECTION:FINAL_SUMMARY:END -->

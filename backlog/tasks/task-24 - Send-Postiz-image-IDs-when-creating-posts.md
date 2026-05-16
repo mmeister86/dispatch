@@ -1,10 +1,10 @@
 ---
 id: TASK-24
 title: Send Postiz image IDs when creating posts
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-15 12:51'
-updated_date: '2026-05-15 12:55'
+updated_date: '2026-05-16 17:34'
 labels: []
 dependencies: []
 priority: high
@@ -40,3 +40,9 @@ Root cause evidence: runtime Postiz validation rejected `image.0.id` as missing.
 
 Implemented create_post.media support for uploaded Postiz media objects, preserving id and path in Public API image payloads and using paths for the legacy MCP attachment shape. Updated system/TUI prompts and README to instruct agents to use create_post.media after upload_media. Verification: GOCACHE=/private/tmp/dispatch-go-build go test ./internal/tools -count=1; go test ./internal/tui -count=1; go test ./... -count=1 all passed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Verified against code and tests. Postiz create_post now accepts uploaded media objects and sends image id plus path in the Public API payload, avoiding URL-only image payload errors.
+<!-- SECTION:FINAL_SUMMARY:END -->

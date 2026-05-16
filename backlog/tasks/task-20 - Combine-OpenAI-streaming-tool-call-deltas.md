@@ -1,10 +1,10 @@
 ---
 id: TASK-20
 title: Combine OpenAI streaming tool call deltas
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-10 13:47'
-updated_date: '2026-05-10 13:48'
+updated_date: '2026-05-16 17:34'
 labels: []
 dependencies: []
 priority: high
@@ -39,3 +39,9 @@ OpenAI streams tool calls across multiple deltas. dispatch currently treats each
 <!-- SECTION:NOTES:BEGIN -->
 Root cause: OpenAI streams function/tool calls as deltas. dispatch emitted every delta as a complete ToolCall, so later argument-only deltas had empty names and were executed as unknown tool "". Added stateful accumulation by tool call index in the OpenAI streaming loop and emit completed calls only when finish_reason is tool_calls. Verification: go test ./internal/provider -count=1 and go test ./... -count=1 passed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Verified against code and tests. OpenAI streaming tool call deltas are accumulated per index and emitted only once complete, preventing empty-name standalone tool calls.
+<!-- SECTION:FINAL_SUMMARY:END -->

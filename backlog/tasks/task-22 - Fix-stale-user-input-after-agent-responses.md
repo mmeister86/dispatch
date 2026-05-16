@@ -1,10 +1,10 @@
 ---
 id: TASK-22
 title: Fix stale user input after agent responses
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-10 18:20'
-updated_date: '2026-05-10 18:23'
+updated_date: '2026-05-16 17:34'
 labels: []
 dependencies: []
 priority: high
@@ -45,3 +45,9 @@ RED: Added TestPlainUpDoesNotRestoreSubmittedInput. It fails on current code bec
 
 GREEN: Removed plain-up last-input recall from the TUI model and removed the README shortcut entry. Focused regression test and full go test ./... now pass; full suite needed outside sandbox because httptest binds loopback ports.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Verified against code and tests. Stale composer input was traced to plain-up recall after submission; that path was removed and regression coverage confirms submitted input is not restored.
+<!-- SECTION:FINAL_SUMMARY:END -->

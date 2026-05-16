@@ -1,10 +1,10 @@
 ---
 id: TASK-25
 title: Add autocomplete for existing slash commands
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-15 12:58'
-updated_date: '2026-05-15 13:09'
+updated_date: '2026-05-16 17:34'
 labels: []
 dependencies: []
 priority: high
@@ -48,3 +48,9 @@ GREEN iteration: added slash command registry and footer rendering. First focuse
 
 Verification: GOCACHE=/private/tmp/dispatch-go-build go test ./internal/tui -count=1 passed. git diff --check passed. Full GOCACHE=/private/tmp/dispatch-go-build go test ./... -count=1 first failed inside the sandbox because httptest could not bind loopback ports, then passed outside the sandbox.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Verified against code and tests. Existing slash commands are registry-backed, partial inputs such as /ses render suggestions, and tab completion integrates with the current TUI input flow.
+<!-- SECTION:FINAL_SUMMARY:END -->

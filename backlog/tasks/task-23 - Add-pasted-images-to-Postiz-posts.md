@@ -1,10 +1,10 @@
 ---
 id: TASK-23
 title: Add pasted images to Postiz posts
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-15 07:15'
-updated_date: '2026-05-15 12:38'
+updated_date: '2026-05-16 17:34'
 labels: []
 dependencies: []
 priority: high
@@ -70,3 +70,9 @@ Debug observation: user pasted the literal text `DISPATCH_DEBUG_KEYS=1 go run .`
 
 Footer-Hinweis ergänzt: ctrl+v bild einfuegen, ctrl+x anhaenge loeschen und cmd+v-Terminal-Weitergabe werden dauerhaft im Footer angezeigt. Footer-Hoehe passt sich bei pending attachments an.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Verified against code and tests. TUI image paste attachments support clipboard images and pasted image paths, show pending state, can be cleared, and send upload_media/create_post.media instructions with submitted prompts; README documents behavior and terminal fallbacks.
+<!-- SECTION:FINAL_SUMMARY:END -->

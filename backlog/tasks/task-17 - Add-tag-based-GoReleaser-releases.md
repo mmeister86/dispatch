@@ -1,10 +1,10 @@
 ---
 id: TASK-17
 title: Add tag-based GoReleaser releases
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-10 11:57'
-updated_date: '2026-05-10 12:00'
+updated_date: '2026-05-16 17:34'
 labels: []
 dependencies: []
 priority: high
@@ -39,3 +39,9 @@ Configure versioned releases so dispatch tags build reproducible cross-platform 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented GoReleaser v2 configuration, tag-triggered GitHub Actions release workflow, and release documentation. Verified with go test ./..., make build, goreleaser check, and a local goreleaser snapshot release that produced Linux/macOS/Windows amd64/arm64 archives plus checksums.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Verified against code and fresh checks. Tag-triggered GoReleaser releases, cross-platform archives, checksums, GitHub Releases, and release documentation are implemented.
+<!-- SECTION:FINAL_SUMMARY:END -->
