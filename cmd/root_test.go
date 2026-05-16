@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/matthias/dispatch/config"
+	"github.com/matthias/dispatch/internal/knowledge"
 	"github.com/spf13/cobra"
 )
 
@@ -53,6 +54,30 @@ func TestRunSetupUsesDefaultProviderAndModelSelections(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("setup output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestBuildSystemPromptIncludesXAlgorithmKnowledgeAndPostizSafety(t *testing.T) {
+	prompt := buildSystemPrompt()
+	insights := strings.TrimSpace(knowledge.XAlgorithmInsights())
+	if insights == "" {
+		t.Fatal("embedded insights should not be empty")
+	}
+	if !strings.Contains(prompt, insights) {
+		t.Fatalf("system prompt should include X algorithm insights:\n%s", prompt)
+	}
+	for _, want := range []string{
+		"Rufe create_post nur auf",
+		"confirmed=true",
+		"Hook",
+		"Dwell",
+		"Reply",
+		"Repost",
+		"Risiko",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, prompt)
 		}
 	}
 }

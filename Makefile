@@ -1,11 +1,17 @@
 APP := dispatch
 BIN_DIR := bin
-VERSION ?= dev
-COMMIT ?= none
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+ifeq ($(strip $(VERSION)),)
+VERSION := dev
+endif
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf none)
+ifeq ($(strip $(COMMIT)),)
+COMMIT := none
+endif
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X github.com/matthias/dispatch/cmd.version=$(VERSION) -X github.com/matthias/dispatch/cmd.commit=$(COMMIT) -X github.com/matthias/dispatch/cmd.date=$(DATE)
 
-.PHONY: help build install run test clean
+.PHONY: help build install run test test-version clean
 
 help:
 	@echo "dispatch targets:"
@@ -26,7 +32,11 @@ run:
 	go run .
 
 test:
+	sh scripts/test_version_metadata.sh
 	go test ./...
+
+test-version:
+	sh scripts/test_version_metadata.sh
 
 clean:
 	rm -rf $(BIN_DIR)
